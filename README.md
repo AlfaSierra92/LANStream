@@ -1,6 +1,6 @@
 # LANStream
 
-LANStream is a lightweight, database-free video browser and player for local networks.
+LANStream is a lightweight, database-free, web-based media browser and player for local networks.
 
 It is designed for people who want to open a browser, peruse a media collection, and play videos without maintaining a proper database, importing a library, matching metadata, running background scans, or really putting any effort into it at all.
 
