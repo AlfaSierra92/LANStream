@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}{{ filename }} · LANStream{% endblock %}
+{% block content %}
+<a class="back-link" href="{{ url_for('browse', root_index=root_index, relpath=parent_rel) }}">← Back to folder</a>
+<div class="detail">
+<div class="poster-wrap"><div class="poster-placeholder">Generating preview…</div>
+<img id="poster" class="{% if not poster_ready %}pending{% endif %}"
+ data-src="{{ url_for('poster', root_index=root_index, relpath=relpath) }}"
+ data-ready="{{ url_for('image_ready', kind='posters', root_index=root_index, relpath=relpath) }}?generation={{ generation }}"
+ {% if poster_ready %}src="{{ url_for('poster', root_index=root_index, relpath=relpath) }}"{% endif %} alt="">
+</div>
+<div class="detail-info">
+<h1>{{ filename }}</h1>
+<dl>
+<dt>Size</dt><dd>{{ size }}</dd>
+<dt>Runtime</dt><dd>{{ duration_text }}</dd>
+<dt>Resolution</dt><dd>{% if width and height %}{{ width }} × {{ height }}{% else %}Unknown{% endif %}</dd>
+<dt>Video</dt><dd>{{ video_codec }}</dd>
+<dt>Playback</dt><dd>{% if native %}Direct browser playback{% else %}Transcoded stream{% endif %}</dd>
+</dl>
+{% if audios %}<div class="stream-summary"><strong>Audio tracks</strong><span>{{ audios|length }}</span></div>{% endif %}
+{% if subtitles %}<div class="stream-summary"><strong>Subtitle tracks</strong><span>{{ subtitles|length }}</span></div>{% endif %}
+<a class="primary action-link" href="{{ url_for('player', root_index=root_index, relpath=relpath) }}">Play</a>
+</div></div>
+{% endblock %}
+{% block scripts %}
+<script>
+const poster=document.getElementById("poster");
+if(poster&&poster.classList.contains("pending")){
+ let tries=0;
+ const check=async()=>{
+  tries++;
+  try{
+   const r=await fetch(poster.dataset.ready,{cache:"no-store"});
+   const j=await r.json();
+   if(!j.current)return;
+   if(j.ready){poster.src=poster.dataset.src+"?t="+Date.now();poster.classList.remove("pending");return;}
+  }catch(_){}
+  if(tries<90&&document.contains(poster))setTimeout(check,1000);
+ };
+ check();
+}
+</script>
+{% endblock %}

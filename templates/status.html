@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block title %}Transcoder Status - LANStream{% endblock %}
+{% block content %}
+<h1>Transcoder status</h1>
+
+<div class="status-summary">
+  <div><span>Version</span><strong id="version">1.0.0</strong></div>
+  <div><span>Selected backend</span><strong id="backend">Loading…</strong></div>
+  <div><span>Active streams</span><strong id="streamCount">0</strong></div>
+  <div><span>Preference</span><strong id="preference">auto</strong></div>
+  <div><span>NVENC profile</span><strong id="nvencProfile">—</strong></div>
+</div>
+
+<div class="status-actions">
+  <button id="retestButton" type="button">Retest transcoder backends</button>
+</div>
+
+<h2>Active streams</h2>
+<p class="status-note">Transfer rate is actual HTTP throughput and may exceed the media bitrate because browsers buffer ahead. Media target shows the configured encoded bitrate when Low Bandwidth mode is active.</p>
+<div id="streamsEmpty" class="empty">No streams are currently active.</div>
+<div class="status-table-wrap">
+  <table class="status-table" id="streamsTable" hidden>
+    <thead>
+      <tr>
+        <th>File</th>
+        <th>Mode</th>
+        <th>Client</th>
+        <th>Transfer rate</th><th>Media target</th>
+        <th>Sent</th>
+        <th>Running</th>
+        <th>Start position</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<h2>Backend tests</h2>
+<div class="status-table-wrap">
+  <table class="status-table">
+    <thead>
+      <tr><th>Backend</th><th>Status</th><th>Profile / FFmpeg</th><th>Details</th></tr>
+    </thead>
+    <tbody id="testsBody"></tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const modeNames = {
+  direct: "Direct",
+  vaapi: "VAAPI",
+  qsv: "Intel QSV",
+  nvenc: "NVIDIA NVENC",
+  amf: "AMD AMF",
+  software: "Software x264"
+};
+
+function formatBytes(value) {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let n = Number(value || 0);
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i++;
+  }
+  return `${n.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function formatElapsed(seconds) {
+  seconds = Math.max(0, Math.floor(Number(seconds || 0)));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h) return `${h}h ${m}m ${s}s`;
+  if (m) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+async function refreshStatus(force = false) {
+  const url = force ? "{{ url_for('transcoder_status_api') }}?refresh=1" : "{{ url_for('transcoder_status_api') }}";
+  const response = await fetch(url, {cache: "no-store"});
+  const data = await response.json();
+
+  document.getElementById("version").textContent = data.version || "1.0.0";
+  document.getElementById("backend").textContent = data.backend || "Unavailable";
+  document.getElementById("streamCount").textContent = data.active_stream_count;
+  document.getElementById("preference").textContent = data.preference || "auto";
+  document.getElementById("nvencProfile").textContent = data.nvenc_profile || "—";
+
+  const tbody = document.querySelector("#streamsTable tbody");
+  const table = document.getElementById("streamsTable");
+  const empty = document.getElementById("streamsEmpty");
+  tbody.innerHTML = "";
+
+  if (data.streams.length) {
+    table.hidden = false;
+    empty.hidden = true;
+
+    for (const stream of data.streams) {
+      const row = document.createElement("tr");
+      const cells = [
+        stream.filename,
+        modeNames[stream.mode] || stream.mode,
+        stream.client,
+        `${Number(stream.bandwidth_mbps).toFixed(2)} Mbps`,
+        stream.target_bitrate || (stream.mode === "direct" ? "Source bitrate" : "Unconstrained"),
+        formatBytes(stream.bytes_sent),
+        formatElapsed(stream.elapsed_seconds),
+        stream.start_offset_seconds ? `${stream.start_offset_seconds.toFixed(1)} s` : "0 s",
+      ];
+      for (const value of cells) {
+        const cell = document.createElement("td");
+        cell.textContent = value;
+        row.appendChild(cell);
+      }
+      tbody.appendChild(row);
+    }
+  } else {
+    table.hidden = true;
+    empty.hidden = false;
+  }
+
+  const testsBody = document.getElementById("testsBody");
+  testsBody.innerHTML = "";
+  for (const test of data.tests) {
+    const row = document.createElement("tr");
+
+    const name = document.createElement("td");
+    name.textContent = test.label;
+
+    const result = document.createElement("td");
+    result.textContent = test.ok ? "Available" : "Unavailable";
+    result.className = test.ok ? "status-ok" : "status-bad";
+
+    const profile = document.createElement("td");
+    if (test.key === "nvenc") {
+      const bits = [];
+      if (test.profile) bits.push(test.profile);
+      if (test.ffmpeg) bits.push(test.ffmpeg);
+      profile.textContent = bits.join(" / ") || "—";
+    } else {
+      profile.textContent = "—";
+    }
+
+    const detail = document.createElement("td");
+    detail.textContent = test.detail || "";
+
+    row.append(name, result, profile, detail);
+    testsBody.appendChild(row);
+  }
+}
+
+document.getElementById("retestButton").addEventListener("click", async () => {
+  const button = document.getElementById("retestButton");
+  button.disabled = true;
+  button.textContent = "Testing…";
+  try {
+    await refreshStatus(true);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Retest transcoder backends";
+  }
+});
+
+refreshStatus();
+setInterval(() => refreshStatus().catch(() => {}), 1000);
+</script>
+{% endblock %}

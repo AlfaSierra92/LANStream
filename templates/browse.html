@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block topbar_filter %}
+<div class="filter-box" title="Filter this folder">
+  <span class="filter-icon" aria-hidden="true"></span>
+  <input id="folderFilter" type="text" autocomplete="off" spellcheck="false" placeholder="Filter">
+</div>
+{% endblock %}
+
+{% block content %}
+<a class="back-link" href="{{ up_url }}">← Up one level</a>
+<nav class="crumbs">
+{% for crumb in crumbs %}
+<a href="{{ crumb.url }}">{{ crumb.name }}</a>{% if not loop.last %}<span>/</span>{% endif %}
+{% endfor %}
+</nav>
+
+{% if folders %}
+<h2>Folders</h2><div class="folder-grid">
+{% for folder in folders %}
+<a class="folder-card filter-item" data-filter-name="{{ folder.name|lower }}" href="{{ url_for('browse', root_index=root_index, relpath=folder.rel) }}">
+<div class="folder-icon"></div><strong>{{ folder.name }}</strong></a>
+{% endfor %}
+</div>
+{% endif %}
+
+{% if videos %}
+<h2>Videos</h2><div class="video-grid">
+{% for video in videos %}
+<a class="video-card filter-item" data-filter-name="{{ video.name|lower }}" href="{{ url_for('video_detail', root_index=root_index, relpath=video.rel) }}">
+<div class="thumb-wrap"><div class="thumb-placeholder">VIDEO</div>
+<img class="lazy-thumb {% if not video.thumb_ready %}pending{% endif %}"
+ data-src="{{ url_for('thumbnail', root_index=root_index, relpath=video.rel) }}"
+ data-ready="{{ url_for('image_ready', kind='thumbs', root_index=root_index, relpath=video.rel) }}?generation={{ generation }}"
+ {% if video.thumb_ready %}src="{{ url_for('thumbnail', root_index=root_index, relpath=video.rel) }}"{% endif %} alt="">
+</div><div class="video-name">{{ video.name }}</div></a>
+{% endfor %}
+</div>
+{% elif not folders %}<div class="empty">No supported videos or subfolders in this folder.</div>{% endif %}
+<div id="filterEmpty" class="empty filter-empty hidden">No folders or videos match that filter.</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach((entry) => {
+    if (!entry.isIntersecting) return;
+    const img = entry.target;
+    observer.unobserve(img);
+    if (!img.classList.contains("pending")) return;
+    let tries = 0;
+    const check = async () => {
+      tries++;
+      try {
+        const r = await fetch(img.dataset.ready, {cache:"no-store"});
+        const j = await r.json();
+        if (!j.current) return;
+        if (j.ready) {
+          img.src = img.dataset.src + "?t=" + Date.now();
+          img.classList.remove("pending");
+          return;
+        }
+      } catch (_) {}
+      if (tries < 90 && document.contains(img)) setTimeout(check, 1500);
+    };
+    check();
+  });
+}, {rootMargin:"700px 0px"});
+document.querySelectorAll(".lazy-thumb.pending").forEach((img) => observer.observe(img));
+
+const filterInput = document.getElementById("folderFilter");
+const filterItems = Array.from(document.querySelectorAll(".filter-item"));
+const filterEmpty = document.getElementById("filterEmpty");
+
+if (filterInput) {
+  // Always start blank, including browser back/forward cache restores.
+  const clearAndFilter = () => {
+    filterInput.value = "";
+    filterItems.forEach((item) => item.classList.remove("filtered-out"));
+    if (filterEmpty) filterEmpty.classList.add("hidden");
+  };
+
+  clearAndFilter();
+  window.addEventListener("pageshow", clearAndFilter);
+
+  filterInput.addEventListener("input", () => {
+    const query = filterInput.value.trim().toLowerCase();
+    let visible = 0;
+
+    filterItems.forEach((item) => {
+      const name = item.dataset.filterName || "";
+      const match = !query || name.includes(query);
+      item.classList.toggle("filtered-out", !match);
+      if (match) visible++;
+    });
+
+    if (filterEmpty) {
+      filterEmpty.classList.toggle("hidden", visible !== 0 || !query);
+    }
+  });
+}
+</script>
+{% endblock %}

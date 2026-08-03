@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark"><meta name="theme-color" content="#05070a">
+<title>{{ filename }} · LANStream</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head><body class="player-body">
+<div class="player-shell">
+<div class="player-top">
+<a class="player-back" href="{{ url_for('video_detail', root_index=root_index, relpath=relpath) }}">← Back to details</a>
+<div class="player-title">{{ filename }}</div><button id="fullscreenTop">Fullscreen</button>
+</div>
+<div class="video-stage"><video id="video" playsinline preload="metadata"></video>
+<div id="playerMessage" class="player-message">Starting playback…</div></div>
+<div class="player-controls">
+<button id="togglePlay">Play</button><button id="back30">−30 sec</button><button id="forward30">+30 sec</button>
+<span id="currentLabel">0:00</span><input id="seek" type="range" min="0" max="{{ duration }}" value="0" step="0.1">
+<span>{{ duration_text }}</span>
+{% if audios %}<div class="quality-mode" role="radiogroup" aria-label="Stream quality">
+ <label><input type="radio" name="qualityMode" value="normal" checked> Normal</label>
+ <label><input type="radio" name="qualityMode" value="low"> Low Bandwidth</label>
+</div>
+ <select id="audioSelect" title="Audio">{% for a in audios %}
+<option value="{{ a.index }}">{{ a.language }} · {{ a.codec }}{% if a.title %} · {{ a.title }}{% endif %}</option>
+{% endfor %}</select>{% endif %}
+{% set text_subs = subtitles | selectattr("text_supported") | list %}
+{% if text_subs %}<select id="subtitleSelect"><option value="">Subtitles off</option>{% for s in text_subs %}
+<option value="{{ s.index }}">{{ s.language }}{% if s.title %} · {{ s.title }}{% endif %}</option>{% endfor %}</select>{% endif %}
+<input id="volume" type="range" min="0" max="1" value="1" step="0.05">
+</div></div>
+<script>
+const nativePlayback={{ "true" if native else "false" }};
+const totalDuration={{ duration }};
+const video=document.getElementById("video"), message=document.getElementById("playerMessage"),
+ togglePlay=document.getElementById("togglePlay"), back30=document.getElementById("back30"),
+ forward30=document.getElementById("forward30"), seek=document.getElementById("seek"),
+ currentLabel=document.getElementById("currentLabel"), volume=document.getElementById("volume"),
+ fullscreenTop=document.getElementById("fullscreenTop"), audioSelect=document.getElementById("audioSelect"),
+ subtitleSelect=document.getElementById("subtitleSelect");
+const nativeUrl={{ url_for('media_file',root_index=root_index,relpath=relpath)|tojson }};
+const transcodeBase={{ url_for('transcode',root_index=root_index,relpath=relpath)|tojson }};
+const subtitleBase={{ url_for('subtitle',root_index=root_index,relpath=relpath)|tojson }};
+let logicalOffset=0,started=false,dragging=false,lowBandwidth=false;
+function fmt(sec){sec=Math.max(0,Math.floor(sec||0));const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;return h?`${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`:`${m}:${String(s).padStart(2,"0")}`;}
+function usingDirect(){return nativePlayback&&!lowBandwidth;}
+function logicalTime(){return usingDirect()?(video.currentTime||0):logicalOffset+(video.currentTime||0);}
+function audio(){return audioSelect?audioSelect.value:"";}
+function msg(t){message.textContent=t;message.classList.toggle("hidden",!t);}
+function subtitles(start){
+ video.querySelectorAll("track").forEach(t=>t.remove());
+ if(!subtitleSelect||!subtitleSelect.value)return;
+ const t=document.createElement("track");t.kind="subtitles";t.label="Selected";t.srclang="en";t.default=true;
+ t.src=subtitleBase+"?stream="+encodeURIComponent(subtitleSelect.value)+"&start="+encodeURIComponent(start);video.appendChild(t);
+}
+function transcode(at){
+ logicalOffset=Math.max(0,Math.min(totalDuration,at));subtitles(logicalOffset);msg("Starting transcoded stream…");
+ video.src=transcodeBase+"?start="+encodeURIComponent(logicalOffset)+"&audio="+encodeURIComponent(audio())+(lowBandwidth?"&low=1":"");
+ video.load();video.play().catch(()=>{});
+}
+function start(at=0){
+ if(usingDirect()){
+  if(!started){subtitles(0);video.src=nativeUrl;video.load();}
+  const go=()=>{try{video.currentTime=at;}catch(_){} video.play().catch(()=>{});};
+  if(video.readyState>=1)go();else video.addEventListener("loadedmetadata",go,{once:true});
+ }else transcode(at);
+ started=true;
+}
+function go(t){t=Math.max(0,Math.min(totalDuration,t));if(!started)return start(t);usingDirect()?video.currentTime=t:transcode(t);}
+togglePlay.onclick=()=>{if(!started)return start(0);video.paused?video.play().catch(()=>{}):video.pause();};
+back30.onclick=()=>go(logicalTime()-30);forward30.onclick=()=>go(logicalTime()+30);
+video.addEventListener("playing",()=>{msg("");togglePlay.textContent="Pause";});
+video.addEventListener("pause",()=>togglePlay.textContent="Play");
+video.addEventListener("waiting",()=>{if(started)msg("Buffering…");});
+video.addEventListener("error",()=>{const e=video.error;msg("Playback failed"+(e?` (browser error ${e.code})`:"")+". Check /transcoder-status and the LANStream container log.");});
+seek.oninput=()=>{dragging=true;currentLabel.textContent=fmt(Number(seek.value));};
+seek.onchange=()=>{dragging=false;go(Number(seek.value));};
+video.addEventListener("timeupdate",()=>{if(dragging)return;const t=Math.min(totalDuration,logicalTime());seek.value=t;currentLabel.textContent=fmt(t);});
+volume.oninput=()=>video.volume=Number(volume.value);
+fullscreenTop.onclick=()=>{const el=document.querySelector(".player-shell");if(el.requestFullscreen)el.requestFullscreen();};
+document.querySelectorAll('input[name="qualityMode"]').forEach(radio=>{
+ radio.addEventListener("change",()=>{
+  if(!radio.checked)return;
+  const wantLow=radio.value==="low";
+  if(wantLow===lowBandwidth)return;
+  const t=logicalTime();
+  lowBandwidth=wantLow;
+  started=false;
+  logicalOffset=0;
+  start(t);
+ });
+});
+if(audioSelect)audioSelect.onchange=()=>{if(started&&!usingDirect())go(logicalTime());};
+if(subtitleSelect)subtitleSelect.onchange=()=>{if(started){usingDirect()?subtitles(0):go(logicalTime());}};
+
+window.addEventListener("DOMContentLoaded",()=>start(0));
+</script></body></html>

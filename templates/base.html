@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0d1117">
+  <title>{% block title %}LANStream{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-left">
+    <a class="brand" href="{{ url_for('home') }}">LANStream</a>
+    {% block topbar_filter %}{% endblock %}
+  </div>
+  {% if session.get('authenticated') %}<a class="logout" href="{{ url_for('logout') }}">Log out</a>{% endif %}
+</header>
+<main class="page">{% block content %}{% endblock %}</main>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Login · LANStream{% endblock %}
+{% block content %}
+<div class="login-wrap"><form class="login-card" method="post">
+<h1>LANStream</h1><p>Enter the password to continue.</p>
+{% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+<input name="password" type="password" autofocus autocomplete="current-password" placeholder="Password">
+<button class="primary" type="submit">Log in</button>
+</form></div>
+{% endblock %}
