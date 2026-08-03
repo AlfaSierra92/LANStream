@@ -1,0 +1,62 @@
+# LANStream configuration
+#
+# This file is read each time LANStream starts. Media path/profile changes are
+# also read while LANStream is running when pages are loaded.
+
+# Native/Windows listening port.
+# Docker overrides the internal port through LANSTREAM_PORT.
+port=8060
+
+# Optional legacy single-password mode.
+# Leave false for passwordless LAN use unless password profiles are defined below.
+use_master_password=false
+master_password=
+
+# Transcoder selection: auto, vaapi, qsv, amf, software
+# "auto" is recommended.
+transcoder=auto
+
+# Low Bandwidth mode
+# Resolution is a maximum bounding box; source aspect ratio is preserved.
+low_bandwidth_resolution=854x480
+low_bandwidth_bitrate=2M
+
+
+# MEDIA PATHS
+# ===========
+# If there are no <password> sections, list one visible media root per line:
+#
+# D:\Movies
+# D:\TV
+# \\NAS\Media\Home Videos
+#
+# Linux examples:
+# /mnt/media/Movies
+# /mnt/media/TV
+
+
+# PASSWORD PROFILES
+# =================
+# If one or more <password> sections are present, the profile password controls
+# which root paths are visible. master_password is ignored.
+
+
+# This example will display the entire contents of the Cartoons, TV, and Movies directories.
+#
+# <GrownupPassword123>
+# D:\Cartoons
+# D:\TV
+# D:\Movies
+
+
+# This example will display the entire contents of the Cartoons, and will display the contents of TV EXCEPT the Sopranos and American Horror Story.
+#
+# <KidPassword123>
+# D:\Cartoons
+# D:\TV
+# -/The Sopranos
+# -/American Horror Story
+
+# A -/ exclusion is relative to the most recently listed root.
+# Full absolute exclusions are also supported.
+#

@@ -1,0 +1,35 @@
+LANStream 1.0.0 - Linux / Docker notes
+========================================
+
+Expected application directory:
+
+  /home/chip/Projects/LANStream
+
+Persistent files/directories:
+
+  config.txt
+  cache/
+
+The media root configured in the LEC preset is mounted read-only. config.txt is
+also mounted read-only; the cache is writable.
+
+The container listens internally on port 8080. The LEC host-port setting
+controls the LAN-facing port.
+
+Transcoding
+-----------
+Linux automatic preference order:
+1. VAAPI
+2. NVIDIA NVENC
+3. Software libx264
+
+For NVIDIA NVENC in Docker, install and configure NVIDIA Container Toolkit on
+the host and enable NVIDIA GPU support in the unified LANStream LEC preset.
+
+Status
+------
+Open:
+
+  http://SERVER:PORT/transcoder-status
+
+to view the selected backend, capability tests, and active stream metrics.
