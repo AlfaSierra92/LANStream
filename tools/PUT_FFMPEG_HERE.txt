@@ -1,0 +1,1 @@
+Place Windows ffmpeg.exe and ffprobe.exe in this folder before running build_windows.bat.
