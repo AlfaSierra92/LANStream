@@ -38,7 +38,7 @@ CONFIG_FILE = Path(os.environ.get("LANSTREAM_CONFIG_FILE", str(APP_DIR / "config
 CACHE_DIR = Path(os.environ.get("LANSTREAM_CACHE_DIR", str(APP_DIR / "cache")))
 SESSION_SECRET = os.environ.get("LANSTREAM_SESSION_SECRET") or secrets.token_hex(32)
 VAAPI_DEVICE = os.environ.get("LANSTREAM_VAAPI_DEVICE", "/dev/dri/renderD128")
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 
 def find_media_tool(name: str) -> str:
@@ -159,9 +159,12 @@ app.secret_key = SESSION_SECRET
 class StreamTracker:
     """In-memory live stream metrics. No database or persistent state."""
 
+    DIRECT_STALE_SECONDS = 60.0
+
     def __init__(self):
         self._lock = threading.Lock()
         self._streams: dict[str, dict[str, Any]] = {}
+        self._direct_keys: dict[tuple[str, str], str] = {}
 
     def start(
         self,
@@ -173,18 +176,33 @@ class StreamTracker:
         target_bitrate: str | None = None,
         quality_mode: str = "normal",
     ) -> str:
-        stream_id = secrets.token_hex(5)
+        client = request.remote_addr or "unknown"
         now = time.monotonic()
+
         with self._lock:
-            self._streams[stream_id] = {
+            if mode == "direct":
+                key = (client, str(source))
+                existing_id = self._direct_keys.get(key)
+                existing = self._streams.get(existing_id) if existing_id else None
+
+                if existing:
+                    existing["open_requests"] += 1
+                    existing["last_activity_monotonic"] = now
+                    existing["detail"] = detail
+                    existing["start_offset"] = float(start_offset)
+                    return existing["id"]
+
+            stream_id = secrets.token_hex(5)
+            item = {
                 "id": stream_id,
                 "mode": mode,
                 "filename": source.name,
                 "path": str(source),
-                "client": request.remote_addr or "unknown",
+                "client": client,
                 "started_monotonic": now,
                 "started_epoch": time.time(),
                 "last_sample_monotonic": now,
+                "last_activity_monotonic": now,
                 "last_sample_bytes": 0,
                 "bytes_sent": 0,
                 "bandwidth_mbps": 0.0,
@@ -192,18 +210,27 @@ class StreamTracker:
                 "detail": detail,
                 "target_bitrate": target_bitrate,
                 "quality_mode": quality_mode,
+                "open_requests": 1 if mode == "direct" else 0,
             }
-        return stream_id
+            self._streams[stream_id] = item
+
+            if mode == "direct":
+                self._direct_keys[(client, str(source))] = stream_id
+
+            return stream_id
 
     def add_bytes(self, stream_id: str, amount: int) -> None:
         if amount <= 0:
             return
+
         now = time.monotonic()
         with self._lock:
             item = self._streams.get(stream_id)
             if not item:
                 return
+
             item["bytes_sent"] += amount
+            item["last_activity_monotonic"] = now
 
             elapsed = now - item["last_sample_monotonic"]
             if elapsed >= 0.5:
@@ -218,11 +245,47 @@ class StreamTracker:
 
     def stop(self, stream_id: str) -> None:
         with self._lock:
-            self._streams.pop(stream_id, None)
+            item = self._streams.get(stream_id)
+            if not item:
+                return
+
+            if item["mode"] == "direct":
+                item["open_requests"] = max(0, item["open_requests"] - 1)
+                if item["open_requests"] > 0:
+                    return
+
+            self._remove_locked(stream_id)
+
+    def _remove_locked(self, stream_id: str) -> None:
+        item = self._streams.pop(stream_id, None)
+        if not item:
+            return
+
+        if item["mode"] == "direct":
+            key = (item["client"], item["path"])
+            if self._direct_keys.get(key) == stream_id:
+                self._direct_keys.pop(key, None)
+
+    def _purge_stale_direct_locked(self, now: float) -> None:
+        stale_ids = [
+            stream_id
+            for stream_id, item in self._streams.items()
+            if (
+                item["mode"] == "direct"
+                and now - item["last_activity_monotonic"] >= self.DIRECT_STALE_SECONDS
+            )
+        ]
+        for stream_id in stale_ids:
+            self._remove_locked(stream_id)
 
     def snapshot(self) -> list[dict[str, Any]]:
         now = time.monotonic()
         with self._lock:
+            # Some WSGI/browser combinations do not always deliver a response-close
+            # callback for abandoned byte-range requests. Direct requests are
+            # therefore also expired after a period with no transferred data.
+            self._purge_stale_direct_locked(now)
+
             result = []
             for item in self._streams.values():
                 elapsed = max(0.001, now - item["started_monotonic"])
@@ -247,6 +310,7 @@ class StreamTracker:
                     "target_bitrate": item.get("target_bitrate"),
                     "quality_mode": item.get("quality_mode", "normal"),
                 })
+
             result.sort(key=lambda row: row["started_at"])
             return result
 
