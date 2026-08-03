@@ -12,6 +12,7 @@ LANStream runs on Linux through Docker or as a portable Windows application. It 
 
 <img width="1145" height="648" alt="lanstream3" src="https://github.com/user-attachments/assets/deb61a2c-8032-498f-adf6-efbf37a8e684" />
 
+<img width="1252" height="798" alt="lanstream4" src="https://github.com/user-attachments/assets/d6109107-5a9f-45f2-b647-8da761586d75" />
 
 ## Why LANStream?
 
