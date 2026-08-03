@@ -1,0 +1,128 @@
+{
+  "format_version": 1,
+  "id": "local.lanstream",
+  "name": "LANStream",
+  "type": "compose",
+  "description": "LANStream 1.0.0 database-free LAN video browser/player. Builds directly from the public GitHub repository, keeps configuration and cache data on the host, and supports optional NVIDIA GPU access.",
+  "fields": [
+    {
+      "id": "application_name",
+      "label": "Application name",
+      "type": "text",
+      "default": "lanstream",
+      "required": true
+    },
+    {
+      "id": "data_dir",
+      "label": "LANStream data directory",
+      "type": "text",
+      "default": "/opt/lanstream",
+      "required": true,
+      "help": "Persistent host directory for config.txt and the thumbnail cache. The directory is mounted into the container and survives rebuilds."
+    },
+    {
+      "id": "media_root",
+      "label": "Media mount root",
+      "type": "text",
+      "default": "/mnt/media",
+      "required": true,
+      "help": "Common parent of every Linux media path you want LANStream to access. It is mounted read-only at the same absolute path inside the container."
+    },
+    {
+      "id": "host_port",
+      "label": "Host web port",
+      "type": "port",
+      "default": 8060,
+      "required": true
+    },
+    {
+      "id": "access_scope",
+      "label": "Network access",
+      "type": "choice",
+      "default": "local_network",
+      "choices": [
+        {
+          "label": "Local or reverse proxy only",
+          "value": "localhost"
+        },
+        {
+          "label": "Local network",
+          "value": "local_network"
+        },
+        {
+          "label": "All networks (not recommended)",
+          "value": "all_networks"
+        }
+      ]
+    },
+    {
+      "id": "allow_firewall",
+      "label": "Create local-network Firewall rule",
+      "type": "boolean",
+      "default": true
+    },
+    {
+      "id": "publish_reverse_proxy",
+      "label": "Publish through Reverse Proxy",
+      "type": "boolean",
+      "default": false
+    },
+    {
+      "id": "public_host",
+      "label": "Public hostname",
+      "type": "text",
+      "default": "",
+      "placeholder": "stream.example.com"
+    },
+    {
+      "id": "proxy_login",
+      "label": "Require an additional Caddy login",
+      "type": "boolean",
+      "default": false
+    },
+    {
+      "id": "use_master_password",
+      "label": "Use master password",
+      "type": "boolean",
+      "default": false,
+      "help": "Used only when config.txt has no <password> profiles."
+    },
+    {
+      "id": "app_password",
+      "label": "LANStream master password",
+      "type": "password",
+      "default": "",
+      "required": false,
+      "help": "Used only when Use master password is enabled."
+    },
+    {
+      "id": "nvidia_gpus",
+      "label": "NVIDIA GPU support",
+      "type": "choice",
+      "default": "[]",
+      "choices": [
+        {
+          "label": "Disabled (Intel / AMD / software)",
+          "value": "[]"
+        },
+        {
+          "label": "Enabled (requires NVIDIA Container Toolkit)",
+          "value": "all"
+        }
+      ],
+      "help": "Enable only on Docker hosts with NVIDIA Container Toolkit installed and configured. LANStream will test NVENC automatically."
+    }
+  ],
+  "compose": {
+    "environment": [
+      "app_password"
+    ],
+    "template": "services:\n  lanstream:\n    build:\n      context: https://github.com/candre23/LANStream.git\n    container_name: {{application_name}}\n    restart: unless-stopped\n    gpus: {{nvidia_gpus}}\n    environment:\n      LANSTREAM_CONFIG_FILE: \"/data/config.txt\"\n      LANSTREAM_CACHE_DIR: \"/data/cache\"\n      LANSTREAM_PORT: \"8080\"\n      LANSTREAM_USE_MASTER_PASSWORD: \"{{use_master_password}}\"\n      LANSTREAM_PASSWORD: \"${APP_PASSWORD}\"\n      LANSTREAM_TRANSCODER: \"auto\"\n      LANSTREAM_VAAPI_DEVICE: \"/dev/dri/renderD128\"\n      LANSTREAM_MEDIA_ROOT: \"{{media_root}}\"\n    command:\n      - /bin/sh\n      - -c\n      - |\n        mkdir -p /data/cache\n        if [ ! -f /data/config.txt ]; then\n          printf '%s\\n' \\\n            '# LANStream configuration' \\\n            '' \\\n            'port=8060' \\\n            'use_master_password=false' \\\n            'master_password=' \\\n            'transcoder=auto' \\\n            'low_bandwidth_resolution=854x480' \\\n            'low_bandwidth_bitrate=2M' \\\n            '' \\\n            \"$$LANSTREAM_MEDIA_ROOT\" > /data/config.txt\n        fi\n        exec gunicorn --workers 1 --threads 8 --timeout 0 --bind 0.0.0.0:8080 app:app\n    ports:\n      - \"{{bind_address}}:{{host_port}}:8080\"\n    volumes:\n      - \"{{data_dir}}:/data\"\n      - \"{{media_root}}:{{media_root}}:ro\"\n    devices:\n      - \"/dev/dri:/dev/dri\"\n"
+  },
+  "service": {
+    "protocol": "http",
+    "transport_protocol": "tcp",
+    "container_port": 8080,
+    "reverse_proxy_compatible": true
+  }
+}
