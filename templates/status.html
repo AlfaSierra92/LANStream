@@ -4,7 +4,6 @@
 <h1>Transcoder status</h1>
 
 <div class="status-summary">
-  <div><span>Version</span><strong id="version">1.0.0</strong></div>
   <div><span>Selected backend</span><strong id="backend">Loading…</strong></div>
   <div><span>Active streams</span><strong id="streamCount">0</strong></div>
   <div><span>Preference</span><strong id="preference">auto</strong></div>
@@ -16,7 +15,6 @@
 </div>
 
 <h2>Active streams</h2>
-<p class="status-note">Transfer rate is actual HTTP throughput and may exceed the media bitrate because browsers buffer ahead. Media target shows the configured encoded bitrate when Low Bandwidth mode is active.</p>
 <div id="streamsEmpty" class="empty">No streams are currently active.</div>
 <div class="status-table-wrap">
   <table class="status-table" id="streamsTable" hidden>
@@ -25,7 +23,7 @@
         <th>File</th>
         <th>Mode</th>
         <th>Client</th>
-        <th>Transfer rate</th><th>Media target</th>
+        <th>Bandwidth</th>
         <th>Sent</th>
         <th>Running</th>
         <th>Start position</th>
@@ -83,7 +81,6 @@ async function refreshStatus(force = false) {
   const response = await fetch(url, {cache: "no-store"});
   const data = await response.json();
 
-  document.getElementById("version").textContent = data.version || "1.0.0";
   document.getElementById("backend").textContent = data.backend || "Unavailable";
   document.getElementById("streamCount").textContent = data.active_stream_count;
   document.getElementById("preference").textContent = data.preference || "auto";
@@ -105,7 +102,6 @@ async function refreshStatus(force = false) {
         modeNames[stream.mode] || stream.mode,
         stream.client,
         `${Number(stream.bandwidth_mbps).toFixed(2)} Mbps`,
-        stream.target_bitrate || (stream.mode === "direct" ? "Source bitrate" : "Unconstrained"),
         formatBytes(stream.bytes_sent),
         formatElapsed(stream.elapsed_seconds),
         stream.start_offset_seconds ? `${stream.start_offset_seconds.toFixed(1)} s` : "0 s",

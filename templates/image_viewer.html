@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="viewer-page">
+<div class="viewer-toolbar">
+<a class="back-link" href="{{ url_for('browse', root_index=root_index, relpath=parent_rel) }}">← Back to folder</a>
+<div class="viewer-title" id="viewerTitle">{{ filename }}</div>
+<button id="fullscreenButton" type="button">Fullscreen</button>
+</div>
+<div class="image-viewer-stage" id="viewerStage">
+<button id="fullscreenExit" class="viewer-fullscreen-exit" type="button">Exit Fullscreen</button>
+{% if previous_rel %}<a class="viewer-nav viewer-prev" href="{{ url_for('image_viewer', root_index=root_index, relpath=previous_rel) }}" data-rel="{{ previous_rel }}" aria-label="Previous image">‹</a>{% endif %}
+<img id="viewerImage" src="{{ url_for('image_file', root_index=root_index, relpath=relpath) }}" alt="{{ filename }}">
+{% if next_rel %}<a class="viewer-nav viewer-next" href="{{ url_for('image_viewer', root_index=root_index, relpath=next_rel) }}" data-rel="{{ next_rel }}" aria-label="Next image">›</a>{% endif %}
+</div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const stage=document.getElementById("viewerStage"),
+ button=document.getElementById("fullscreenButton"),
+ exitButton=document.getElementById("fullscreenExit"),
+ image=document.getElementById("viewerImage"),
+ title=document.getElementById("viewerTitle");
+const navigationBase={{ url_for('image_navigation',root_index=root_index,relpath='__REL__')|tojson }};
+let navigating=false,wheelLock=false;
+
+function isFullscreen(){return document.fullscreenElement===stage;}
+async function toggleFullscreen(){
+ try{
+  if(isFullscreen())await document.exitFullscreen();
+  else await stage.requestFullscreen();
+ }catch(_){}
+}
+function updateFullscreen(){
+ const active=isFullscreen();
+ button.textContent=active?"Exit Fullscreen":"Fullscreen";
+ exitButton.hidden=!active;
+}
+button.onclick=toggleFullscreen;
+exitButton.onclick=toggleFullscreen;
+document.addEventListener("fullscreenchange",updateFullscreen);
+updateFullscreen();
+
+function navLink(direction){
+ return document.querySelector(direction<0?".viewer-prev":".viewer-next");
+}
+function navApi(rel){
+ return navigationBase.replace("__REL__",rel.split("/").map(encodeURIComponent).join("/"));
+}
+function renderNav(which,data,direction){
+ let link=navLink(direction);
+ if(!data){
+  if(link)link.remove();
+  return;
+ }
+ if(!link){
+  link=document.createElement("a");
+  link.className="viewer-nav "+(direction<0?"viewer-prev":"viewer-next");
+  link.setAttribute("aria-label",direction<0?"Previous image":"Next image");
+  link.textContent=direction<0?"‹":"›";
+  stage.appendChild(link);
+ }
+ link.href=data.viewer_url;
+ link.dataset.rel=data.relpath;
+}
+async function move(direction){
+ const link=navLink(direction);
+ if(!link||navigating)return;
+ if(!isFullscreen()){
+  location.href=link.href;
+  return;
+ }
+ navigating=true;
+ try{
+  const response=await fetch(navApi(link.dataset.rel),{cache:"no-store"});
+  if(!response.ok)throw new Error("navigation failed");
+  const data=await response.json();
+  image.src=data.image_url;
+  image.alt=data.filename;
+  title.textContent=data.filename;
+  document.title=data.filename+" · LANStream";
+  history.replaceState(null,"",data.viewer_url);
+  renderNav("previous",data.previous,-1);
+  renderNav("next",data.next,1);
+ }catch(_){
+  location.href=link.href;
+ }finally{
+  navigating=false;
+ }
+}
+stage.addEventListener("click",e=>{
+ const link=e.target.closest(".viewer-nav");
+ if(!link)return;
+ e.preventDefault();
+ move(link.classList.contains("viewer-prev")?-1:1);
+});
+document.addEventListener("keydown",e=>{
+ if(e.key==="ArrowLeft"){e.preventDefault();move(-1);}
+ if(e.key==="ArrowRight"){e.preventDefault();move(1);}
+});
+let x=null;
+stage.addEventListener("touchstart",e=>{x=e.changedTouches[0].clientX},{passive:true});
+stage.addEventListener("touchend",e=>{
+ if(x===null)return;
+ const d=e.changedTouches[0].clientX-x;
+ x=null;
+ if(Math.abs(d)<60)return;
+ move(d>0?-1:1);
+},{passive:true});
+stage.addEventListener("wheel",e=>{
+ if(!isFullscreen()||wheelLock||Math.abs(e.deltaY)<4)return;
+ e.preventDefault();
+ wheelLock=true;
+ move(e.deltaY>0?1:-1);
+ window.setTimeout(()=>{wheelLock=false},350);
+},{passive:false});
+</script>
+{% endblock %}

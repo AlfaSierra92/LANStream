@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="viewer-page">
+<div class="viewer-toolbar">
+<a class="back-link" href="{{ url_for('browse', root_index=root_index, relpath=parent_rel) }}">← Back to folder</a>
+<div class="viewer-title">{{ filename }}</div>
+<button id="fullscreenButton" type="button">Fullscreen</button>
+</div>
+<div class="document-stage" id="viewerStage">
+<button id="prevPage" class="viewer-nav viewer-prev" type="button" aria-label="Previous page">‹</button>
+<img id="pageImage" alt="">
+<button id="nextPage" class="viewer-nav viewer-next" type="button" aria-label="Next page">›</button>
+<div class="page-counter"><span id="pageNumber">1</span> / {{ page_count }}</div>
+</div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const count={{ page_count }},base={{ url_for('document_page',root_index=root_index,relpath=relpath)|tojson }};
+const img=document.getElementById("pageImage"),num=document.getElementById("pageNumber"),prev=document.getElementById("prevPage"),next=document.getElementById("nextPage"),stage=document.getElementById("viewerStage"),full=document.getElementById("fullscreenButton");
+let page=0;
+function show(n){page=Math.max(0,Math.min(count-1,n));img.src=base+"?page="+page;num.textContent=page+1;prev.disabled=page===0;next.disabled=page===count-1;if(page+1<count){const p=new Image();p.src=base+"?page="+(page+1);}}
+prev.onclick=()=>show(page-1);next.onclick=()=>show(page+1);
+document.addEventListener("keydown",e=>{if(e.key==="ArrowLeft"||e.key==="PageUp")show(page-1);if(e.key==="ArrowRight"||e.key==="PageDown")show(page+1);});
+full.onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await stage.requestFullscreen();}catch(_){}};
+document.addEventListener("fullscreenchange",()=>full.textContent=document.fullscreenElement?"Exit Fullscreen":"Fullscreen");
+let x=null;stage.addEventListener("touchstart",e=>{x=e.changedTouches[0].clientX},{passive:true});stage.addEventListener("touchend",e=>{if(x===null)return;const d=e.changedTouches[0].clientX-x;x=null;if(Math.abs(d)<60)return;show(page+(d<0?1:-1));},{passive:true});
+show(0);
+</script>
+{% endblock %}

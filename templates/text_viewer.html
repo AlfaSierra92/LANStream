@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="text-reader">
+<div class="viewer-toolbar">
+<a class="back-link" href="{{ url_for('browse', root_index=root_index, relpath=parent_rel) }}">← Back to folder</a>
+<div class="viewer-title">{{ filename }}</div>
+</div>
+<pre class="plain-text-reader">{{ text }}</pre>
+</div>
+{% endblock %}
