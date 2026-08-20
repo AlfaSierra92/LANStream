@@ -1,35 +1,55 @@
-LANStream 1.0.0 - Linux / Docker notes
-========================================
+LANStream v0.4.0 Linux/Docker update
+======================================
 
-Expected application directory:
+IMPORTANT CONFIG MOVE
+---------------------
+The old file:
 
-  /home/chip/Projects/LANStream
+/home/chip/Projects/LANStream/config/paths.txt
 
-Persistent files/directories:
+is replaced by:
 
-  config.txt
-  cache/
+/home/chip/Projects/LANStream/config.txt
 
-The media root configured in the LEC preset is mounted read-only. config.txt is
-also mounted read-only; the cache is writable.
+Before replacing the source, copy your existing path/profile lines into the new
+config.txt.
 
-The container listens internally on port 8080. The LEC host-port setting
-controls the LAN-facing port.
+The config subdirectory is no longer used.
+
+Example config.txt:
+
+port=8060
+use_master_password=false
+master_password=
+transcoder=auto
+
+/mnt/media/Movies
+/mnt/media/TV
+
+Docker notes
+------------
+The updated LEC preset bind-mounts:
+
+/home/chip/Projects/LANStream/config.txt -> /config.txt
+
+and overrides LANStream's internal port to 8080. The LEC host-port choice still
+controls the LAN-facing Docker port.
+
+The cache remains:
+
+/home/chip/Projects/LANStream/cache
 
 Transcoding
 -----------
-Linux automatic preference order:
-1. VAAPI
-2. NVIDIA NVENC
-3. Software libx264
+Linux now tries VAAPI first and automatically falls back to software libx264 if
+VAAPI is unavailable.
 
-For NVIDIA NVENC in Docker, install and configure NVIDIA Container Toolkit on
-the host and enable NVIDIA GPU support in the unified LANStream LEC preset.
+Check:
 
-Status
-------
-Open:
+http://SERVER-IP:PORT/transcoder-status
 
-  http://SERVER:PORT/transcoder-status
+Windows
+-------
+See README-WINDOWS.txt and build_windows.bat.
 
-to view the selected backend, capability tests, and active stream metrics.
+No database or installation service is required for the Windows build.

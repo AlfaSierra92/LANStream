@@ -534,9 +534,26 @@ def image_siblings(root: Path, source: Path) -> tuple[str | None, str | None]:
     )
 
 
+def cache_root_key(root: Path) -> str:
+    try:
+        resolved = root.resolve(strict=False)
+    except RuntimeError:
+        resolved = root.absolute()
+
+    normalized = os.path.normcase(os.path.normpath(str(resolved)))
+    digest = hashlib.sha256(
+        normalized.encode("utf-8", errors="surrogatepass")
+    ).hexdigest()[:16]
+    return f"root_{digest}"
+
+
+def cache_root_dir(kind: str, root: Path) -> Path:
+    return CACHE_DIR / kind / cache_root_key(root)
+
+
 def cache_path(kind: str, root_index: int, root: Path, source: Path) -> Path:
     rel = source.relative_to(root)
-    return CACHE_DIR / kind / f"root_{root_index}" / rel.parent / f"{rel.name}.jpg"
+    return cache_root_dir(kind, root) / rel.parent / f"{rel.name}.jpg"
 
 
 def probe(path: Path) -> dict[str, Any]:
@@ -1522,7 +1539,8 @@ def folder_cached_preview(
 ) -> Path | None:
     relative = Path(folder_rel)
     for kind in ("thumbs", "posters"):
-        cache_dir = CACHE_DIR / kind / f"root_{root_index}" / relative
+        root = get_root(root_index)
+        cache_dir = cache_root_dir(kind, root) / relative
         try:
             if not cache_dir.is_dir():
                 continue
