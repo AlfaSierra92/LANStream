@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import socket
+import sys
 
 from waitress import serve
 
-from app import SERVER_PORT, VERSION, app, selected_transcoder
+from app import SERVER_PORT, app, selected_transcoder
 
 
 def local_ip() -> str:
@@ -21,8 +22,8 @@ def local_ip() -> str:
 if __name__ == "__main__":
     status = selected_transcoder()
     print("")
-    print(f"LANStream {VERSION}")
-    print("=" * (10 + len(VERSION)))
+    print("LANStream")
+    print("=========")
     print(f"Local:   http://127.0.0.1:{SERVER_PORT}")
     print(f"Network: http://{local_ip()}:{SERVER_PORT}")
     print(f"Transcoder: {status['label']}")
