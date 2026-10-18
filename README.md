@@ -52,8 +52,8 @@ This makes it particularly useful for:
 - Browse ordinary folders directly from a web browser
 - Multiple configurable media roots
 - Client-side filtering of the currently displayed directory
-- Lazy thumbnail generation
-- Cached thumbnails and preview images
+- Lazy, cached thumbnails for images, PDFs and comics
+- Video browsing without preview generation
 - Dedicated browser-based video player
 - Extremely low seek latency and buffering times
 - Audio & subtitle track selection
@@ -102,6 +102,28 @@ the application). Saving uses an atomic file replacement. For Docker, mount the
 configuration's **parent directory** writable and point `LANSTREAM_CONFIG_FILE` at the
 file inside it; a read-only mount or a bind mount of only the file cannot be replaced.
 Media mounts can stay read-only. Comments and unknown settings are retained.
+
+### Compact player and playback info
+
+The video fills the player window. A small overlay holds playback, seeking, volume,
+settings and fullscreen controls, and fades out during playback. Open the gear menu
+to choose quality, audio or subtitles without reserving space below the video.
+
+Open **ⓘ Playback info** (keyboard shortcut **I**) for live diagnostics: direct play
+or transcoding and its reason, source/output codecs, actual browser video dimensions,
+video/audio bitrate targets, encoder, subtitle selection, buffer ahead, displayed FPS,
+dropped frames, and request transfer statistics. Source metadata includes frame rate,
+pixel format, color transfer, audio channels/sample rate and file bitrate.
+
+Browser metrics refresh once per second while the panel is visible. Unavailable values
+show “—”. FPS measures displayed frames over wall-clock time, rather than the file's
+nominal frame rate. Transfer rate measures HTTP delivery, including buffering, rather
+than encoded media bitrate. Metrics belong to the current browser session and media
+request. Completed request statistics are retained briefly so they remain visible
+while buffered playback continues. No background probing is needed for polling.
+
+Video posters, video thumbnails, and folder preview scans have been removed. Images,
+PDFs and comics keep their thumbnails; existing cache files are not deleted.
 
 ### Playback quality
 

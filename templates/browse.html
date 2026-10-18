@@ -17,11 +17,7 @@
 <h2 class="section-heading">Folders <span>{{ folders|length }}</span></h2><div class="folder-grid">
 {% for folder in folders %}
 <a class="folder-card filter-item" data-filter-name="{{ folder.name|lower }}" href="{{ url_for('browse', root_index=root_index, relpath=folder.rel) }}">
-{% if folder.preview %}
-<div class="folder-preview"><img src="{{ url_for('folder_preview', root_index=root_index, relpath=folder.rel) }}" alt=""></div>
-{% else %}
 <div class="folder-icon"></div>
-{% endif %}
 <strong>{{ folder.name }}</strong></a>
 {% endfor %}
 </div>
@@ -32,12 +28,13 @@
 <h2 class="section-heading">{{ title }} <span>{{ items|length }}</span></h2><div class="video-grid">
 {% for item in items %}
 <a class="video-card filter-item" data-filter-name="{{ item.name|lower }}" href="{{ url_for(route_name, root_index=root_index, relpath=item.rel) }}">
-<div class="thumb-wrap"><div class="thumb-placeholder">{{ placeholder }}</div>
+<div class="thumb-wrap {% if route_name == 'video_detail' %}video-symbol{% endif %}"><div class="thumb-placeholder">{% if route_name == 'video_detail' %}<span aria-hidden="true">▶</span>{% else %}{{ placeholder }}{% endif %}</div>
+{% if route_name != 'video_detail' %}
 <img class="lazy-thumb {% if not item.thumb_ready %}pending{% endif %}"
  data-src="{{ url_for('thumbnail', root_index=root_index, relpath=item.rel) }}"
  data-ready="{{ url_for('image_ready', kind='thumbs', root_index=root_index, relpath=item.rel) }}?generation={{ generation }}"
  {% if item.thumb_ready %}src="{{ url_for('thumbnail', root_index=root_index, relpath=item.rel) }}"{% endif %} alt="">
-</div><div class="video-name">{{ item.name }}</div></a>
+{% endif %}</div><div class="video-name">{{ item.name }}</div></a>
 {% endfor %}
 </div>
 {% endif %}

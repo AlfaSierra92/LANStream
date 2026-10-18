@@ -23,7 +23,7 @@ from typing import Any
 
 from flask import (
     Flask, Response, abort, jsonify, redirect, render_template, request,
-    send_file, session, stream_with_context, url_for, make_response,
+    send_file, session, url_for, make_response,
 )
 from PIL import Image, ImageOps
 import fitz
@@ -130,6 +130,7 @@ class StreamTracker:
     def __init__(self):
         self._lock = threading.Lock()
         self._streams: dict[str, dict[str, Any]] = {}
+        self._recent: dict[str, dict[str, Any]] = {}
 
     def start(
         self,
@@ -156,6 +157,8 @@ class StreamTracker:
                 "bandwidth_mbps": 0.0,
                 "start_offset": float(start_offset),
                 "detail": detail,
+                "playback_id": request.args.get("playback_id", "")[:64],
+                "owner": session.get("playback_owner"),
             }
         return stream_id
 
@@ -182,7 +185,32 @@ class StreamTracker:
 
     def stop(self, stream_id: str) -> None:
         with self._lock:
-            self._streams.pop(stream_id, None)
+            item = self._streams.pop(stream_id, None)
+            if item and item["playback_id"] and item["owner"]:
+                item["stopped_monotonic"] = time.monotonic()
+                self._recent[stream_id] = item
+                while len(self._recent) > 128:
+                    self._recent.pop(next(iter(self._recent)))
+
+    def playback_metrics(self, playback_id: str, source: Path, owner: str | None) -> dict | None:
+        if not playback_id or not owner:
+            return None
+        now = time.monotonic()
+        with self._lock:
+            self._recent = {key: item for key, item in self._recent.items()
+                            if now - item["stopped_monotonic"] < 600}
+            matches = [item for item in [*self._recent.values(), *self._streams.values()]
+                       if item["playback_id"] == playback_id and item["path"] == str(source) and item["owner"] == owner]
+            if not matches:
+                return None
+            item = max(matches, key=lambda row: row["started_monotonic"])
+            active = "stopped_monotonic" not in item
+            elapsed = max(0.001, now - item["started_monotonic"])
+            rate = item["bandwidth_mbps"] or item["bytes_sent"] * 8 / elapsed / 1_000_000
+            if not active or now - item["last_sample_monotonic"] > 2:
+                rate = 0
+            return {"backend": item["mode"], "detail": item["detail"], "active": active,
+                    "bytes_sent": item["bytes_sent"], "bandwidth_mbps": round(rate, 2)}
 
     def snapshot(self) -> list[dict[str, Any]]:
         now = time.monotonic()
@@ -563,8 +591,8 @@ def probe(path: Path) -> dict[str, Any]:
     cmd = [
         FFPROBE, "-v", "error",
         "-show_entries",
-        "format=duration,size,format_name:"
-        "stream=index,codec_type,codec_name,width,height,channels:"
+        "format=duration,size,format_name,bit_rate:"
+        "stream=index,codec_type,codec_name,profile,level,width,height,channels,channel_layout,sample_rate,bit_rate,avg_frame_rate,pix_fmt,color_space,color_transfer,color_primaries:"
         "stream_tags=language,title",
         "-of", "json", str(path),
     ]
@@ -579,48 +607,6 @@ def duration_seconds(info: dict[str, Any]) -> float:
         return max(0.0, float(info.get("format", {}).get("duration", 0) or 0))
     except (TypeError, ValueError):
         return 0.0
-
-
-def screenshot_candidates(info: dict[str, Any]) -> list[float]:
-    """Return useful thumbnail sample times while avoiding intros/credits."""
-    d = duration_seconds(info)
-    if d <= 2:
-        return [0.0]
-
-    candidates = [
-        max(2.0, d * 0.10),
-        max(2.0, d * 0.20),
-        max(2.0, d * 0.35),
-        max(2.0, d * 0.50),
-        max(2.0, d * 0.70),
-        min(30.0, max(2.0, d * 0.05)),
-    ]
-
-    result: list[float] = []
-    for value in candidates:
-        value = min(max(0.0, value), max(0.0, d - 0.5))
-        if not any(abs(value - existing) < 0.5 for existing in result):
-            result.append(value)
-    return result
-
-
-def frame_black_percent(source: Path, stamp: float) -> float | None:
-    """Return the percentage of sampled pixels FFmpeg considers black."""
-    cmd = [
-        FFMPEG, "-hide_banner", "-loglevel", "info",
-        "-ss", f"{stamp:.3f}", "-i", str(source),
-        "-frames:v", "1",
-        "-vf", "blackframe=amount=0:threshold=32",
-        "-f", "null", "-"
-    ]
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        match = re.search(r"pblack:(\d+)", proc.stderr or "")
-        if match:
-            return float(match.group(1))
-    except Exception:
-        pass
-    return None
 
 
 def _save_pillow_jpeg(image: Image.Image, output: Path, width: int) -> None:
@@ -776,59 +762,12 @@ def _generate_nonvideo_thumbnail(source: Path, output: Path, width: int) -> bool
 
 
 def generate_image(source: Path, output: Path, width: int, generation: int, scheduler: ImageScheduler):
-    if generation != scheduler.current_generation():
+    if generation != scheduler.current_generation() or media_kind(source) == "video":
         return
-
     output.parent.mkdir(parents=True, exist_ok=True)
     tmp = output.with_suffix(".tmp.jpg")
-
     try:
-        if media_kind(source) != "video":
-            if _generate_nonvideo_thumbnail(source, tmp, width):
-                if generation == scheduler.current_generation():
-                    tmp.replace(output)
-            return
-
-        info = probe(source)
-        candidates = screenshot_candidates(info)
-
-        for stamp in candidates:
-            if generation != scheduler.current_generation():
-                return
-            black_percent = frame_black_percent(source, stamp)
-            if black_percent is not None and black_percent >= 85:
-                continue
-            cmd = [
-                FFMPEG, "-hide_banner", "-loglevel", "error",
-                "-ss", f"{stamp:.3f}", "-i", str(source),
-                "-frames:v", "1",
-                "-vf", f"scale={width}:-2:force_original_aspect_ratio=decrease",
-                "-q:v", "3", "-y", str(tmp),
-            ]
-            proc = subprocess.run(cmd, capture_output=True, timeout=90)
-            if (
-                proc.returncode == 0
-                and tmp.exists()
-                and generation == scheduler.current_generation()
-            ):
-                tmp.replace(output)
-                return
-            tmp.unlink(missing_ok=True)
-
-        fallback = candidates[0] if candidates else 0.0
-        cmd = [
-            FFMPEG, "-hide_banner", "-loglevel", "error",
-            "-ss", f"{fallback:.3f}", "-i", str(source),
-            "-frames:v", "1",
-            "-vf", f"scale={width}:-2:force_original_aspect_ratio=decrease",
-            "-q:v", "3", "-y", str(tmp),
-        ]
-        proc = subprocess.run(cmd, capture_output=True, timeout=90)
-        if (
-            proc.returncode == 0
-            and tmp.exists()
-            and generation == scheduler.current_generation()
-        ):
+        if _generate_nonvideo_thumbnail(source, tmp, width) and generation == scheduler.current_generation():
             tmp.replace(output)
     except Exception as exc:
         scheduler.mark_failed(generation, output)
@@ -1216,7 +1155,6 @@ def home():
             "index": i,
             "label": root_label(p, i),
             "exists": p.is_dir(),
-            "preview": bool(folder_cached_preview(i, "", recursive=True)),
         }
         for i, p in enumerate(roots)
         if not path_is_excluded(p)
@@ -1252,7 +1190,6 @@ def browse(root_index, relpath):
                 folders.append({
                     "name": entry.name,
                     "rel": folder_rel,
-                    "preview": bool(folder_cached_preview(root_index, folder_rel)),
                 })
                 continue
 
@@ -1262,11 +1199,10 @@ def browse(root_index, relpath):
 
             rel = entry.relative_to(root).as_posix()
             item: dict[str, Any] = {"name": entry.name, "rel": rel, "kind": kind}
-            if kind != "text":
+            if kind not in {"text", "video"}:
                 thumb = cache_path("thumbs", root_index, root, entry)
-                poster = cache_path("posters", root_index, root, entry) if kind == "video" else None
                 item.update({
-                    "thumb_ready": thumb.exists() or bool(poster and poster.exists()),
+                    "thumb_ready": thumb.exists(),
                     "_source": entry,
                     "_thumb": thumb,
                 })
@@ -1281,7 +1217,7 @@ def browse(root_index, relpath):
     # Queue only the first visible-ish supported media items. Additional
     # thumbnails are requested lazily as cards approach the viewport.
     primed = 0
-    for kind in ("video", "image", "pdf", "comic"):
+    for kind in ("image", "pdf", "comic"):
         for item in media[kind]:
             if primed >= 12:
                 break
@@ -1529,7 +1465,6 @@ def text_viewer(root_index, relpath):
 
 @app.route("/video/<int:root_index>/<path:relpath>")
 def video_detail(root_index, relpath):
-    generation = image_scheduler.new_generation()
     root = get_root(root_index)
     source = safe_path(root, relpath)
     if not is_video(source):
@@ -1537,8 +1472,6 @@ def video_detail(root_index, relpath):
 
     info = probe(source)
     videos, audios, subtitles = stream_lists(info)
-    poster = cache_path("posters", root_index, root, source)
-    image_scheduler.submit(generation, 0, source, poster, 960)
     v = videos[0] if videos else {}
 
     return render_template(
@@ -1551,9 +1484,18 @@ def video_detail(root_index, relpath):
         video_codec=v.get("codec", "unknown"),
         audios=audios, subtitles=subtitles,
         native=direct_playback_ok(source, info, audios),
-        poster_ready=poster.exists(), generation=generation,
         quality_profiles=QUALITY_PROFILES, default_quality=load_settings().get("default_quality", "auto"),
     )
+
+
+def playback_media_info(info: dict) -> dict:
+    streams = info.get("streams", [])
+    return {
+        "container": info.get("format", {}).get("format_name", "unknown"),
+        "bit_rate": info.get("format", {}).get("bit_rate"),
+        "video": next((stream for stream in streams if stream.get("codec_type") == "video"), {}),
+        "audios": [stream for stream in streams if stream.get("codec_type") == "audio"],
+    }
 
 
 @app.route("/play/<int:root_index>/<path:relpath>")
@@ -1565,11 +1507,12 @@ def player(root_index, relpath):
         abort(404)
     info = probe(source)
     _, audios, subtitles = stream_lists(info)
+    session.setdefault("playback_owner", secrets.token_hex(16))
     d = duration_seconds(info)
     return render_template(
         "player.html", root_index=root_index, relpath=relpath,
         filename=source.name, duration=d, duration_text=fmt_duration(d),
-        audios=audios, subtitles=subtitles,
+        audios=audios, subtitles=subtitles, media_info=playback_media_info(info),
         native=direct_playback_ok(source, info, audios),
         quality_profiles=QUALITY_PROFILES,
         default_quality=request.args.get("quality") if request.args.get("quality") in QUALITY_PROFILES else load_settings().get("default_quality", "auto"),
@@ -1640,7 +1583,7 @@ def ranged_file_response(source: Path, mimetype: str):
             finally:
                 stream_tracker.stop(stream_id)
 
-        response = Response(stream_with_context(whole_file()), status=200, mimetype=mimetype)
+        response = Response(whole_file(), status=200, mimetype=mimetype)
         response.headers["Content-Length"] = str(file_size)
         response.headers["Accept-Ranges"] = "bytes"
         response.headers["Cache-Control"] = "private, max-age=0"
@@ -1685,7 +1628,7 @@ def ranged_file_response(source: Path, mimetype: str):
             stream_tracker.stop(stream_id)
 
     response = Response(
-        stream_with_context(partial_file()),
+        partial_file(),
         status=206,
         mimetype=mimetype,
         direct_passthrough=True,
@@ -1710,84 +1653,14 @@ def media_file(root_index, relpath):
 
 def best_cached_image(root_index: int, root: Path, source: Path, requested_kind: str) -> Path | None:
     requested = cache_path(requested_kind, root_index, root, source)
-    if requested.exists():
-        return requested
-    if requested_kind == "thumbs":
-        poster = cache_path("posters", root_index, root, source)
-        if poster.exists():
-            return poster
-    return None
-
-
-def folder_cached_preview(
-    root_index: int,
-    folder_rel: str,
-    recursive: bool = False,
-) -> Path | None:
-    relative = Path(folder_rel)
-    for kind in ("thumbs", "posters"):
-        root = get_root(root_index)
-        cache_dir = cache_root_dir(kind, root) / relative
-        try:
-            if not cache_dir.is_dir():
-                continue
-
-            candidates = [
-                entry for entry in cache_dir.iterdir()
-                if entry.is_file() and entry.suffix.lower() == ".jpg"
-            ]
-            if candidates:
-                candidates.sort(key=lambda path: natural_sort_key(path.name))
-                return candidates[0]
-
-            if recursive:
-                for current, dirnames, filenames in os.walk(cache_dir):
-                    dirnames.sort(key=natural_sort_key)
-                    jpgs = [
-                        name for name in filenames
-                        if Path(name).suffix.lower() == ".jpg"
-                    ]
-                    if jpgs:
-                        jpgs.sort(key=natural_sort_key)
-                        return Path(current) / jpgs[0]
-        except OSError:
-            continue
-
-    return None
-
-
-@app.route(
-    "/folder-preview/<int:root_index>/",
-    defaults={"relpath": ""},
-)
-@app.route("/folder-preview/<int:root_index>/<path:relpath>")
-def folder_preview(root_index, relpath):
-    root = get_root(root_index)
-    folder = root if not relpath else safe_path(root, relpath)
-    if not folder.is_dir():
-        abort(404)
-
-    preview = folder_cached_preview(
-        root_index,
-        relpath,
-        recursive=not bool(relpath),
-    )
-    if not preview:
-        abort(404)
-
-    return send_file(
-        preview,
-        mimetype="image/jpeg",
-        conditional=True,
-        max_age=86400,
-    )
+    return requested if requested.exists() else None
 
 
 @app.route("/thumb/<int:root_index>/<path:relpath>")
 def thumbnail(root_index, relpath):
     root = get_root(root_index)
     source = safe_path(root, relpath)
-    if media_kind(source) not in {"video", "image", "pdf", "comic"}:
+    if media_kind(source) not in {"image", "pdf", "comic"}:
         abort(404)
     out = best_cached_image(root_index, root, source, "thumbs")
     if not out:
@@ -1795,21 +1668,9 @@ def thumbnail(root_index, relpath):
     return send_file(out, mimetype="image/jpeg", conditional=True, max_age=86400)
 
 
-@app.route("/poster/<int:root_index>/<path:relpath>")
-def poster(root_index, relpath):
-    root = get_root(root_index)
-    source = safe_path(root, relpath)
-    if not is_video(source):
-        abort(404)
-    out = cache_path("posters", root_index, root, source)
-    if not out.exists():
-        abort(404)
-    return send_file(out, mimetype="image/jpeg", conditional=True, max_age=86400)
-
-
 @app.route("/api/image-ready/<kind>/<int:root_index>/<path:relpath>")
 def image_ready(kind, root_index, relpath):
-    if kind not in {"thumbs", "posters"}:
+    if kind != "thumbs":
         abort(404)
     try:
         generation = int(request.args.get("generation", "0"))
@@ -1819,18 +1680,11 @@ def image_ready(kind, root_index, relpath):
     root = get_root(root_index)
     source = safe_path(root, relpath)
     source_kind = media_kind(source)
-    if kind == "thumbs":
-        if source_kind not in {"video", "image", "pdf", "comic"}:
-            abort(404)
-        found = best_cached_image(root_index, root, source, "thumbs")
-        out = cache_path("thumbs", root_index, root, source)
-        width, priority = 360, 10
-    else:
-        if source_kind != "video":
-            abort(404)
-        out = cache_path("posters", root_index, root, source)
-        found = out if out.exists() else None
-        width, priority = 960, 0
+    if source_kind not in {"image", "pdf", "comic"}:
+        abort(404)
+    found = best_cached_image(root_index, root, source, "thumbs")
+    out = cache_path("thumbs", root_index, root, source)
+    width, priority = 360, 10
 
     current = generation == image_scheduler.current_generation()
     failed = image_scheduler.failed(generation, out) if current else False
@@ -2018,6 +1872,19 @@ def transcode(root_index, relpath):
     response.headers["Content-Type"] = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"'
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Accel-Buffering"] = "no"
+    return response
+
+
+@app.route("/api/playback-info/<int:root_index>/<path:relpath>")
+def playback_info(root_index, relpath):
+    root = get_root(root_index)
+    source = safe_path(root, relpath)
+    if not is_video(source):
+        abort(404)
+    metrics = stream_tracker.playback_metrics(
+        request.args.get("playback_id", ""), source, session.get("playback_owner"))
+    response = jsonify({"stream": metrics})
+    response.headers["Cache-Control"] = "no-store"
     return response
 
 

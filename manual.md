@@ -1994,3 +1994,35 @@ Set `default_quality=auto` in config.txt or use Settings → Playback quality to
 the default for new sessions. Valid defaults: auto, source, 360p, 480p, 720p, 1080p,
 1440p and 2160p. A selection made on the video details page overrides this default for
 that playback. The Activity page includes each transcoded stream's quality.
+
+
+## Compact playback controls and live technical information
+
+Video now fills the playback window, with a small control bar overlaid at the bottom.
+Controls fade out after inactivity while playing, both in a normal window and in
+fullscreen. They remain visible while paused, using the keyboard or opening a panel.
+Open the gear menu for quality, custom bitrate, audio tracks and subtitles. The menu
+scrolls on small screens and can be closed with Escape.
+
+The ⓘ button (or I key) opens Playback info without interrupting the video. It shows:
+
+- Direct play or transcoding, its reason, and the selected encoder.
+- Output video/audio codecs, decoded resolution and encoder bitrate targets.
+- Selected subtitle track, playback state, buffer ahead and dropped/total frames.
+- Displayed frames per second, measured over real elapsed time while playing.
+- HTTP request transfer rate and bytes delivered, separate from media bitrate.
+- Source container, codecs, resolution, nominal FPS, pixel format, color transfer,
+  audio channels/sample rate and file bitrate.
+
+Values refresh every second only while the panel is open and the page is visible.
+Unavailable metrics display an em dash. Transcoded codecs follow the actual H.264/AAC
+encoder configuration; output resolution comes from browser metadata. Source values
+come from ffprobe. No repeated ffprobe/encoder tests are run by the diagnostics panel.
+HTTP transfer can finish ahead of playback because the browser buffers the video;
+completed request information is retained for up to ten minutes (bounded in memory).
+It is isolated by browser session, video path and a per-request random token.
+
+Video preview generation, video thumbnail requests and folder preview scans have been
+removed; older instructions about generating video previews no longer apply. Video
+cards use a compact play icon and the detail page shows metadata directly. Image,
+PDF and comic thumbnails are still available. Existing cached files are left in place.

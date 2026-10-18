@@ -5,180 +5,93 @@
 <title>{{ filename }} · LANStream</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head><body class="player-body">
-<div class="player-shell" id="playerShell">
-<div class="player-top">
-<a class="player-back" href="{{ url_for('video_detail', root_index=root_index, relpath=relpath) }}">← Back to details</a>
-<div class="player-title">{{ filename }}</div>
-<button id="fullscreenTop" type="button" aria-label="Enter fullscreen">Fullscreen</button>
+<div class="player-shell compact-player" id="playerShell">
+  <div class="video-stage" id="videoStage">
+    <video id="video" playsinline preload="metadata"></video>
+    <div id="playerMessage" class="player-message" role="status">Starting playback…</div>
+  </div>
+  <header class="player-top">
+    <a class="player-back" aria-label="Back to video details" href="{{ url_for('video_detail', root_index=root_index, relpath=relpath) }}">← Back</a>
+    <div class="player-title">{{ filename }}</div>
+    <button id="infoToggle" class="icon-button" type="button" aria-label="Playback info" aria-expanded="false" aria-controls="playbackStats" title="Playback info (I)">ⓘ</button>
+  </header>
+  <div class="player-controls" id="playerControls">
+    <div class="player-seek-row">
+      <span id="currentLabel">0:00</span>
+      <input id="seek" type="range" min="0" max="{{ duration }}" value="0" step="0.1" aria-label="Seek">
+      <span class="duration-label">{{ duration_text }}</span>
+    </div>
+    <div class="player-control-row">
+      <button id="togglePlay" class="icon-button" type="button" aria-label="Play" title="Play / pause (Space)">▶</button>
+      <button id="back30" class="icon-button skip-button" type="button" title="Back 30 seconds" aria-label="Back 30 seconds">−30</button>
+      <button id="forward30" class="icon-button skip-button" type="button" title="Forward 30 seconds" aria-label="Forward 30 seconds">+30</button>
+      <div class="volume-control"><span class="volume-label" aria-hidden="true">♪</span><input id="volume" type="range" min="0" max="1" value="1" step="0.05" aria-label="Volume"></div>
+      <span class="playback-badge" id="playbackMode">Preparing</span>
+      <span id="qualityDescription" class="sr-only" aria-live="polite"></span>
+      <button id="optionsToggle" class="icon-button" type="button" aria-label="Playback settings" aria-expanded="false" aria-controls="playbackOptions" title="Quality, audio & subtitles">⚙</button>
+      <button id="fullscreenTop" class="icon-button" type="button" aria-label="Enter fullscreen" title="Fullscreen (F)">⛶</button>
+    </div>
+    <section id="playbackOptions" class="player-options" aria-label="Playback settings" hidden>
+      <div class="panel-heading"><h2>Playback settings</h2><button id="optionsClose" type="button" class="icon-button" aria-label="Close playback settings">×</button></div>
+      <label for="qualitySelect">Quality</label>
+      <select id="qualitySelect" aria-describedby="qualityDescription">
+        {% for key, profile in quality_profiles.items() %}<option value="{{ key }}" {% if key == default_quality %}selected{% endif %}>{{ profile.label }}</option>{% endfor %}
+        <option value="custom">Custom…</option>
+      </select>
+      <div class="custom-quality" id="customQuality" hidden>
+        <label>Maximum resolution<select id="customHeight"><option value="240">240p</option><option value="360">360p</option><option value="480">480p</option><option value="720" selected>720p</option><option value="1080">1080p</option><option value="1440">1440p</option><option value="2160">4K</option></select></label>
+        <label>Video · Kbps<input id="customBitrate" type="number" min="300" max="40000" step="100" value="4000"></label>
+        <label>Audio · Kbps<select id="customAudio"><option>96</option><option selected>128</option><option>160</option><option>192</option><option>256</option></select></label>
+        <button type="button" id="applyQuality">Apply quality</button>
+      </div>
+      {% if audios %}<label for="audioSelect">Audio track</label><select id="audioSelect">{% for a in audios %}<option value="{{ a.index }}">{{ a.language }} · {{ a.codec }}{% if a.title %} · {{ a.title }}{% endif %}</option>{% endfor %}</select>{% endif %}
+      {% set text_subs = subtitles | selectattr("text_supported") | list %}
+      {% if text_subs %}<label for="subtitleSelect">Subtitles</label><select id="subtitleSelect"><option value="">Subtitles off</option>{% for s in text_subs %}<option value="{{ s.index }}">{{ s.language }}{% if s.title %} · {{ s.title }}{% endif %}</option>{% endfor %}</select>{% endif %}
+    </section>
+  </div>
+  <aside id="playbackStats" class="playback-stats" aria-label="Playback info" hidden>
+    <div class="panel-heading"><div><span class="eyebrow">LIVE DIAGNOSTICS</span><h2>Playback info</h2></div><button id="infoClose" type="button" class="icon-button" aria-label="Close playback info">×</button></div>
+    <h3>Current playback</h3>
+    <dl>
+      <dt>Method</dt><dd id="statMethod">—</dd>
+      <dt>Reason</dt><dd id="statReason">—</dd>
+      <dt>Video codec</dt><dd id="statVideoCodec">—</dd>
+      <dt>Audio codec</dt><dd id="statAudioCodec">—</dd>
+      <dt>Resolution</dt><dd id="statResolution">—</dd>
+      <dt>Video target</dt><dd id="statVideoTarget">—</dd>
+      <dt>Audio target</dt><dd id="statAudioTarget">—</dd>
+      <dt>Encoder</dt><dd id="statEncoder">—</dd>
+      <dt>Subtitles</dt><dd id="statSubtitle">Off</dd>
+    </dl>
+    <h3>Live performance</h3>
+    <dl>
+      <dt>State</dt><dd id="statState">—</dd>
+      <dt>Buffer ahead</dt><dd id="statBuffer">—</dd>
+      <dt>Displayed FPS</dt><dd id="statFps">—</dd>
+      <dt>Dropped frames</dt><dd id="statDropped">—</dd>
+      <dt>Transfer rate</dt><dd id="statBandwidth">—</dd>
+      <dt>Request bytes</dt><dd id="statTransferred">—</dd>
+    </dl>
+    <h3>Source file</h3>
+    <dl>
+      <dt>Container</dt><dd id="statContainer">—</dd>
+      <dt>Video</dt><dd id="statSourceVideo">—</dd>
+      <dt>Resolution</dt><dd id="statSourceResolution">—</dd>
+      <dt>Frame rate</dt><dd id="statSourceFps">—</dd>
+      <dt>Pixel format</dt><dd id="statPixelFormat">—</dd>
+      <dt>Color transfer</dt><dd id="statColor">—</dd>
+      <dt>Audio track</dt><dd id="statSourceAudio">—</dd>
+      <dt>File bitrate</dt><dd id="statSourceBitrate">—</dd>
+    </dl>
+    <p class="stats-note">Targets are encoder settings. Transfer rate measures delivery of the current HTTP request, including buffering; it is not the media bitrate. Unavailable browser metrics show “—”.</p>
+  </aside>
 </div>
-<div class="video-stage" id="videoStage"><video id="video" playsinline preload="metadata"></video>
-<div id="playerMessage" class="player-message">Starting playback…</div></div>
-<div class="player-controls" id="playerControls">
-<div class="player-seek-row">
-<span id="currentLabel">0:00</span>
-<input id="seek" type="range" min="0" max="{{ duration }}" value="0" step="0.1" aria-label="Seek">
-<span class="duration-label">{{ duration_text }}</span>
-</div>
-<div class="player-control-row">
-<div class="player-transport">
-<button id="togglePlay" type="button">Play</button>
-<button id="back30" type="button" title="Back 30 seconds" aria-label="Back 30 seconds">&lt;&lt;</button>
-<button id="forward30" type="button" title="Forward 30 seconds" aria-label="Forward 30 seconds">&gt;&gt;</button>
-</div>
-<div class="player-setting quality-setting">
-<label for="qualitySelect">Quality</label>
-<select id="qualitySelect" aria-describedby="qualityDescription">
-{% for key, profile in quality_profiles.items() %}<option value="{{ key }}" {% if key == default_quality %}selected{% endif %}>{{ profile.label }}</option>{% endfor %}
-<option value="custom">Custom…</option>
-</select>
-</div>
-{% if audios %}<div class="player-setting"><label for="audioSelect">Audio</label>
-<select id="audioSelect" title="Audio" aria-label="Audio track">{% for a in audios %}
-<option value="{{ a.index }}">{{ a.language }} · {{ a.codec }}{% if a.title %} · {{ a.title }}{% endif %}</option>
-{% endfor %}</select></div>{% endif %}
-{% set text_subs = subtitles | selectattr("text_supported") | list %}
-{% if text_subs %}<div class="player-setting"><label for="subtitleSelect">Subtitles</label><select id="subtitleSelect" title="Subtitles" aria-label="Subtitles"><option value="">Subtitles off</option>{% for s in text_subs %}
-<option value="{{ s.index }}">{{ s.language }}{% if s.title %} · {{ s.title }}{% endif %}</option>{% endfor %}</select></div>{% endif %}
-<div class="volume-control">
-<span class="volume-label">Vol</span>
-<input id="volume" type="range" min="0" max="1" value="1" step="0.05" aria-label="Volume">
-</div>
-</div>
-<div class="custom-quality" id="customQuality" hidden>
-<label>Maximum resolution<select id="customHeight" aria-label="Custom maximum resolution"><option value="240">240p</option><option value="360">360p</option><option value="480">480p</option><option value="720" selected>720p</option><option value="1080">1080p</option><option value="1440">1440p</option><option value="2160">4K</option></select></label>
-<label>Video · Kbps<input id="customBitrate" type="number" min="300" max="40000" step="100" value="4000"></label>
-<label>Audio · Kbps<select id="customAudio"><option>96</option><option selected>128</option><option>160</option><option>192</option><option>256</option></select></label>
-<button type="button" id="applyQuality">Apply quality</button>
-</div>
-<div class="playback-info"><span class="playback-badge" id="playbackMode">Preparing</span><span id="qualityDescription" aria-live="polite">Choose a quality to balance detail and bandwidth.</span><span class="keyboard-hint">Space · play / pause &nbsp; F · fullscreen</span></div>
-</div>
-</div>
-<script>
-const nativePlayback={{ "true" if native else "false" }};
-const totalDuration={{ duration }};
-const playerShell=document.getElementById("playerShell"),
- video=document.getElementById("video"), message=document.getElementById("playerMessage"),
- playerControls=document.getElementById("playerControls"),
- togglePlay=document.getElementById("togglePlay"), back30=document.getElementById("back30"),
- forward30=document.getElementById("forward30"), seek=document.getElementById("seek"),
- currentLabel=document.getElementById("currentLabel"), volume=document.getElementById("volume"),
- fullscreenTop=document.getElementById("fullscreenTop"), audioSelect=document.getElementById("audioSelect"),
- subtitleSelect=document.getElementById("subtitleSelect");
-const nativeUrl={{ url_for('media_file',root_index=root_index,relpath=relpath)|tojson }};
-const transcodeBase={{ url_for('transcode',root_index=root_index,relpath=relpath)|tojson }};
-const subtitleBase={{ url_for('subtitle',root_index=root_index,relpath=relpath)|tojson }};
-const qualitySelect=document.getElementById("qualitySelect"), customQuality=document.getElementById("customQuality"),
- customHeight=document.getElementById("customHeight"), customBitrate=document.getElementById("customBitrate"), customAudio=document.getElementById("customAudio");
-const qualityProfiles={{ quality_profiles|tojson }};
-let quality=qualitySelect.value, custom={height:720,bitrate:4000,audio:128};
-let streamIsDirect=false;
-let logicalOffset=0,started=false,dragging=false,controlsTimer=null,forceTranscode=false;
-function updateQualityInfo(){
- const direct=usingDirect();
- document.getElementById("playbackMode").textContent=direct?"Direct play":"Transcoding";
- const profile=qualityProfiles[quality];
- document.getElementById("qualityDescription").textContent=direct?"Original file · no conversion":quality==="custom"?`Up to ${custom.height}p · video ${custom.bitrate/1000} Mbps + audio ${custom.audio} Kbps`:profile.video_kbps?`Up to ${profile.height}p · video ${profile.video_kbps/1000} Mbps + audio ${profile.audio_kbps} Kbps`:"Source resolution · variable bitrate";
-}
-
-function fmt(sec){sec=Math.max(0,Math.floor(sec||0));const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;return h?`${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`:`${m}:${String(s).padStart(2,"0")}`;}
-function usingDirect(){return nativePlayback&&quality==="auto"&&!forceTranscode&&(!audioSelect||audioSelect.selectedIndex===0);}
-function logicalTime(){return streamIsDirect?(video.currentTime||0):logicalOffset+(video.currentTime||0);}
-function audio(){return audioSelect?audioSelect.value:"";}
-function msg(t){message.textContent=t;message.classList.toggle("hidden",!t);}
-function subtitles(start){
- video.querySelectorAll("track").forEach(t=>t.remove());
- if(!subtitleSelect||!subtitleSelect.value)return;
- const t=document.createElement("track");t.kind="subtitles";t.label="Selected";t.srclang="en";t.default=true;
- t.src=subtitleBase+"?stream="+encodeURIComponent(subtitleSelect.value)+"&start="+encodeURIComponent(start);video.appendChild(t);
-}
-function transcode(at,autoplay=true){
- logicalOffset=Math.max(0,Math.min(totalDuration,at));subtitles(logicalOffset);msg("Starting transcoded stream…");
- const params=new URLSearchParams({start:logicalOffset,audio:audio(),quality});
- if(quality==="custom"){params.set("height",custom.height);params.set("bitrate",custom.bitrate);params.set("audio_bitrate",custom.audio);}
- video.src=transcodeBase+"?"+params;video.load();if(autoplay)video.play().catch(()=>{});
-}
-function start(at=0,autoplay=true){
- updateQualityInfo();
- streamIsDirect=usingDirect();
- if(usingDirect()){
-  if(!started){subtitles(0);video.src=nativeUrl;video.load();}
-  const playAt=()=>{try{video.currentTime=at;}catch(_){} if(autoplay)video.play().catch(()=>{});};
-  if(video.readyState>=1)playAt();else video.addEventListener("loadedmetadata",playAt,{once:true});
- }else transcode(at,autoplay);
- started=true;
-}
-function go(t){t=Math.max(0,Math.min(totalDuration,t));if(!started)return start(t);usingDirect()?video.currentTime=t:transcode(t,!video.paused);}
-function fullscreenElement(){return document.fullscreenElement||document.webkitFullscreenElement||null;}
-function isFullscreen(){return fullscreenElement()===playerShell;}
-async function toggleFullscreen(){
- try{
-  if(isFullscreen()){
-   if(document.exitFullscreen)await document.exitFullscreen();
-   else if(document.webkitExitFullscreen)document.webkitExitFullscreen();
-  }else{
-   if(playerShell.requestFullscreen)await playerShell.requestFullscreen();
-   else if(playerShell.webkitRequestFullscreen)playerShell.webkitRequestFullscreen();
-  }
- }catch(_){}
-}
-function clearControlsTimer(){if(controlsTimer!==null){window.clearTimeout(controlsTimer);controlsTimer=null;}}
-function scheduleControlsHide(){
- clearControlsTimer();
- if(!isFullscreen()||video.paused||dragging||playerControls.contains(document.activeElement))return;
- controlsTimer=window.setTimeout(()=>{if(isFullscreen()&&!video.paused&&!dragging)playerShell.classList.add("controls-hidden");},3000);
-}
-function showControls(){playerShell.classList.remove("controls-hidden");scheduleControlsHide();}
-function updateFullscreenState(){
- const active=isFullscreen();
- playerShell.classList.toggle("is-fullscreen",active);
- fullscreenTop.textContent=active?"Exit Fullscreen":"Fullscreen";
- fullscreenTop.setAttribute("aria-label",active?"Exit fullscreen":"Enter fullscreen");
- showControls();
-}
-
-togglePlay.onclick=()=>{showControls();if(!started)return start(0);video.paused?video.play().catch(()=>{}):video.pause();};
-back30.onclick=()=>{showControls();go(logicalTime()-30);};
-forward30.onclick=()=>{showControls();go(logicalTime()+30);};
-video.addEventListener("playing",()=>{msg("");togglePlay.textContent="Pause";scheduleControlsHide();});
-video.addEventListener("loadeddata",()=>{if(video.paused)msg("");});
-video.addEventListener("pause",()=>{togglePlay.textContent="Play";showControls();clearControlsTimer();});
-video.addEventListener("waiting",()=>{if(started)msg("Buffering…");});
-video.addEventListener("error",()=>{if(streamIsDirect&&!forceTranscode){switchStream(()=>{forceTranscode=true;});return;}const e=video.error;msg("Playback failed"+(e?` (browser error ${e.code})`:"")+". Check /transcoder-status and the LANStream container log.");});
-seek.oninput=()=>{dragging=true;showControls();currentLabel.textContent=fmt(Number(seek.value));};
-seek.onchange=()=>{dragging=false;go(Number(seek.value));scheduleControlsHide();};
-video.addEventListener("timeupdate",()=>{if(dragging)return;const t=Math.min(totalDuration,logicalTime());seek.value=t;currentLabel.textContent=fmt(t);});
-volume.oninput=()=>{video.volume=Number(volume.value);showControls();};
-fullscreenTop.onclick=toggleFullscreen;
-
-function switchStream(change){
- const at=logicalTime(),autoplay=!video.paused;
- change();started=false;logicalOffset=0;start(at,autoplay);showControls();
-}
-qualitySelect.addEventListener("change",()=>{
- customQuality.hidden=qualitySelect.value!=="custom";
- if(qualitySelect.value==="custom")return;
- switchStream(()=>{quality=qualitySelect.value;forceTranscode=false;});
-});
-document.getElementById("applyQuality").addEventListener("click",()=>{
- if(!customBitrate.reportValidity())return;
- switchStream(()=>{quality="custom";custom={height:Number(customHeight.value),bitrate:Number(customBitrate.value),audio:Number(customAudio.value)};forceTranscode=false;});
-});
-if(audioSelect)audioSelect.onchange=()=>switchStream(()=>{});
-if(subtitleSelect)subtitleSelect.onchange=()=>{showControls();if(started){usingDirect()?subtitles(0):go(logicalTime());}};
-
-["pointermove","pointerdown","touchstart"].forEach(type=>playerShell.addEventListener(type,showControls,{passive:true}));
-playerControls.addEventListener("pointerenter",()=>{clearControlsTimer();playerShell.classList.remove("controls-hidden");});
-playerControls.addEventListener("pointerleave",scheduleControlsHide);
-playerControls.addEventListener("focusin",()=>{clearControlsTimer();playerShell.classList.remove("controls-hidden");});
-playerControls.addEventListener("focusout",scheduleControlsHide);
-
-document.addEventListener("keydown",event=>{
- if(["INPUT","SELECT","TEXTAREA","BUTTON"].includes(event.target.tagName))return;
- if(event.key==="f"||event.key==="F"){event.preventDefault();toggleFullscreen();return;}
- if(event.key===" "&&!["INPUT","SELECT","BUTTON"].includes(event.target.tagName)){event.preventDefault();togglePlay.click();return;}
- showControls();
-});
-document.addEventListener("fullscreenchange",updateFullscreenState);
-document.addEventListener("webkitfullscreenchange",updateFullscreenState);
-window.addEventListener("DOMContentLoaded",()=>{start(0);updateFullscreenState();});
-</script></body></html>
+<script id="playbackConfig" type="application/json">{{ {
+ 'native': native, 'duration': duration, 'media': media_info, 'profiles': quality_profiles,
+ 'nativeUrl': url_for('media_file',root_index=root_index,relpath=relpath),
+ 'transcodeUrl': url_for('transcode',root_index=root_index,relpath=relpath),
+ 'subtitleUrl': url_for('subtitle',root_index=root_index,relpath=relpath),
+ 'statsUrl': url_for('playback_info',root_index=root_index,relpath=relpath)
+}|tojson }}</script>
+<script src="{{ url_for('static',filename='player.js') }}" defer></script>
+</body></html>
