@@ -131,3 +131,4 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,te
 @media(max-height:450px){.playback-stats{top:48px;max-height:calc(100dvh - 140px)}.player-options{max-height:calc(100dvh - 140px)}.compact-player .player-top{padding-top:4px;padding-bottom:10px}}
 @media(prefers-reduced-motion:reduce){.compact-player .player-top,.compact-player .player-controls{transition:none}}
 .compact-player .player-top{padding-top:max(8px,env(safe-area-inset-top))}
+.codec-help{color:#9eb4c4;font-size:.71rem;line-height:1.5;margin:12px 0}.player-options select option:disabled{color:#7c8791}.codec-retry{font-size:.75rem;padding:7px 10px}

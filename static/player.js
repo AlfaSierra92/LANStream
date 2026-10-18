@@ -7,19 +7,23 @@ const playerShell=el('playerShell'), video=el('video'), message=el('playerMessag
  qualitySelect=el('qualitySelect'), customQuality=el('customQuality'),
  options=el('playbackOptions'), stats=el('playbackStats');
 const totalDuration=config.duration;
+const videoCodecSelect=el('videoCodecSelect'), audioCodecSelect=el('audioCodecSelect');
+let videoCodec='auto', audioCodec='auto', codecCapabilities=null, codecLoading=false, lastTechnical=null;
+const videoCodecNames={h264:'H.264 / AVC',hevc:'H.265 / HEVC',av1:'AV1'};
+const audioCodecNames={aac:'AAC',opus:'Opus',mp3:'MP3'};
 let quality=qualitySelect.value, custom={height:720,bitrate:4000,audio:128};
 let streamIsDirect=false, logicalOffset=0, started=false, dragging=false, forceTranscode=false;
 let controlsTimer=null, controlsHovered=false, playbackId='', lastFrameSample=null;
 let statsTimer=null, statsBusy=false, statsRequest=null;
 
 function fmt(sec){sec=Math.max(0,Math.floor(sec||0));const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;return h?`${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${m}:${String(s).padStart(2,'0')}`;}
-function usingDirect(){return config.native&&quality==='auto'&&!forceTranscode&&(!audioSelect||audioSelect.selectedIndex===0);}
+function usingDirect(){return config.native&&quality==='auto'&&videoCodec==='auto'&&audioCodec==='auto'&&!forceTranscode&&(!audioSelect||audioSelect.selectedIndex===0);}
 function logicalTime(){return streamIsDirect?(video.currentTime||0):logicalOffset+(video.currentTime||0);}
 function audio(){return audioSelect?audioSelect.value:'';}
 function msg(text){message.textContent=text;message.classList.toggle('hidden',!text);}
 function newRequest(){
  playbackId=Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');
- lastFrameSample=null;
+ lastFrameSample=null;lastTechnical=null;
  for(const id of ['statEncoder','statBandwidth','statTransferred'])el(id).textContent='—';
 }
 function updateQualityInfo(){
@@ -35,7 +39,7 @@ function subtitles(start){
 }
 function transcode(at,autoplay=true){
  logicalOffset=Math.max(0,Math.min(totalDuration,at));newRequest();subtitles(logicalOffset);msg('Starting stream…');
- const params=new URLSearchParams({start:logicalOffset,audio:audio(),quality,playback_id:playbackId});
+ const params=new URLSearchParams({start:logicalOffset,audio:audio(),quality,video_codec:videoCodec,audio_codec:audioCodec,playback_id:playbackId});
  if(quality==='custom'){params.set('height',custom.height);params.set('bitrate',custom.bitrate);params.set('audio_bitrate',custom.audio);}
  video.src=config.transcodeUrl+'?'+params;video.load();if(autoplay)video.play().catch(()=>{});
 }
@@ -69,7 +73,7 @@ function closeStats(restoreFocus=false){
  clearInterval(statsTimer);statsTimer=null;statsRequest?.abort();lastFrameSample=null;
  if(restoreFocus)el('infoToggle').focus();showControls();
 }
-el('optionsToggle').onclick=()=>{if(!options.hidden)return closeOptions();closeStats();options.hidden=false;el('optionsToggle').setAttribute('aria-expanded','true');showControls();qualitySelect.focus();};
+el('optionsToggle').onclick=()=>{if(!options.hidden)return closeOptions();closeStats();options.hidden=false;el('optionsToggle').setAttribute('aria-expanded','true');showControls();qualitySelect.focus();loadCodecOptions();};
 el('optionsClose').onclick=()=>closeOptions(true);
 el('infoToggle').onclick=()=>{if(!stats.hidden)return closeStats();closeOptions();stats.hidden=false;el('infoToggle').setAttribute('aria-expanded','true');showControls();el('infoClose').focus();refreshStats();statsTimer=setInterval(refreshStats,1000);};
 el('infoClose').onclick=()=>closeStats(true);
@@ -93,6 +97,47 @@ el('applyQuality').onclick=()=>{if(!el('customBitrate').reportValidity())return;
 if(audioSelect)audioSelect.onchange=()=>switchStream(()=>{});
 if(subtitleSelect)subtitleSelect.onchange=()=>{showControls();if(started)streamIsDirect?subtitles(0):go(logicalTime());};
 
+function supportsCodec(codec){return video.canPlayType(`video/mp4; codecs="${codec}"`)!=='';}
+function codecHint(){
+ const selected=codecCapabilities?.video.find(item=>item.id===videoCodec);
+ el('codecStatus').textContent='Auto preserves direct play when possible. Choosing a codec forces transcoding.'+(selected?.backend==='software'&&selected.id!=='h264'?' This video codec uses software encoding.':'');
+}
+async function loadCodecOptions(){
+ if(codecCapabilities||codecLoading)return;
+ codecLoading=true;el('codecStatus').textContent='Checking server encoders and browser support…';el('retryCodecs').hidden=true;
+ try{
+  const response=await fetch(config.codecsUrl,{cache:'no-store'});
+  if(!response.ok)throw new Error('Codec detection failed');
+  const capabilities=await response.json();
+  for(const [select,items] of [[videoCodecSelect,capabilities.video],[audioCodecSelect,capabilities.audio]]){
+   if(!select)continue;
+   for(const item of items){
+    const option=document.createElement('option');option.value=item.id;
+    const browserOK=supportsCodec(item.browser_codec);
+    option.disabled=!item.available||!browserOK;
+    option.textContent=item.label+(!item.available?' · unavailable on server':!browserOK?' · unsupported by browser':item.backend==='software'?' · software':'');
+    select.appendChild(option);
+   }
+  }
+  codecCapabilities=capabilities;codecHint();
+ }catch(_){el('codecStatus').textContent='Codec detection unavailable. Auto playback is still available.';el('retryCodecs').hidden=false;}
+ finally{codecLoading=false;}
+}
+function changeCodecs(){
+ const wantVideo=videoCodecSelect.value,wantAudio=audioCodecSelect?.value||'auto';
+ const v=codecCapabilities?.video.find(item=>item.id===(wantVideo==='auto'?'h264':wantVideo));
+ const a=codecCapabilities?.audio.find(item=>item.id===(wantAudio==='auto'?'aac':wantAudio));
+ const codecString=[v?.browser_codec,...(audioSelect?[a?.browser_codec]:[])].filter(Boolean).join(', ');
+ if(codecString&&!supportsCodec(codecString)){
+  videoCodecSelect.value=videoCodec;if(audioCodecSelect)audioCodecSelect.value=audioCodec;
+  el('codecStatus').textContent='This video/audio combination is unsupported by your browser. Choose another codec.';return;
+ }
+ switchStream(()=>{videoCodec=wantVideo;audioCodec=wantAudio;forceTranscode=false;});codecHint();
+}
+videoCodecSelect.onchange=changeCodecs;
+if(audioCodecSelect)audioCodecSelect.onchange=changeCodecs;
+el('retryCodecs').onclick=loadCodecOptions;
+
 function put(id,value){el(id).textContent=value===null||value===undefined||value===''?'—':String(value);}
 function codec(stream){return stream?.codec_name?.toUpperCase()||'—';}
 function bitrate(value){return Number(value)>0?`${(Number(value)/1000000).toFixed(2)} Mbps`:'—';}
@@ -100,9 +145,9 @@ function sourceFps(value){if(!value)return '—';const [a,b=1]=String(value).spl
 function updateLocalStats(){
  const source=config.media, originalVideo=source.video, selectedAudio=source.audios.find(track=>String(track.index)===audio()), profile=config.profiles[quality];
  put('statMethod',streamIsDirect?'Direct play':'Transcoding');
- put('statReason',streamIsDirect?'Browser supports the original file':forceTranscode?'Direct playback failed':quality!=='auto'?'Selected quality profile':audioSelect&&audioSelect.selectedIndex>0?'Selected audio track':'Source requires conversion');
- put('statVideoCodec',streamIsDirect?codec(originalVideo):'H.264 / AVC');
- put('statAudioCodec',!selectedAudio?'No audio':streamIsDirect?`${codec(selectedAudio)} · ${selectedAudio.channels||'?'} ${selectedAudio.channels===1?'channel':'channels'}`:'AAC · stereo');
+ put('statReason',streamIsDirect?'Browser supports the original file':forceTranscode?'Direct playback failed':videoCodec!=='auto'||audioCodec!=='auto'?'Selected video / audio codec':quality!=='auto'?'Selected quality profile':audioSelect&&audioSelect.selectedIndex>0?'Selected audio track':'Source requires conversion');
+ put('statVideoCodec',streamIsDirect?codec(originalVideo):videoCodecNames[lastTechnical?.video_codec||(videoCodec==='auto'?'h264':videoCodec)]);
+ put('statAudioCodec',!selectedAudio?'No audio':streamIsDirect?`${codec(selectedAudio)} · ${selectedAudio.channels||'?'} ${selectedAudio.channels===1?'channel':'channels'}`:`${audioCodecNames[lastTechnical?.audio_codec||(audioCodec==='auto'?'aac':audioCodec)]} · stereo · 48 kHz`);
  put('statResolution',video.videoWidth&&video.videoHeight?`${video.videoWidth} × ${video.videoHeight}`:'Waiting for metadata');
  const videoKbps=quality==='custom'?custom.bitrate:profile?.video_kbps;
  put('statVideoTarget',streamIsDirect?'Original (no conversion)':videoKbps?`${videoKbps/1000} Mbps`:'Variable bitrate (no cap)');
@@ -135,7 +180,8 @@ async function refreshStats(){
   const data=await response.json();if(token!==playbackId||stats.hidden)return;
   const stream=data.stream;
   if(stream){
-   if(!streamIsDirect)put('statEncoder',stream.detail.split(' · ')[0]);
+   lastTechnical=stream.technical||null;
+   if(!streamIsDirect){put('statEncoder',lastTechnical?.encoder_label||stream.detail.split(' · ')[0]);if(lastTechnical?.fallback)put('statReason',lastTechnical.fallback);}
    put('statBandwidth',`${stream.bandwidth_mbps.toFixed(2)} Mbps${stream.active?'':' · request completed'}`);
    put('statTransferred',`${(stream.bytes_sent/1048576).toFixed(2)} MiB`);
   }else{if(!streamIsDirect)put('statEncoder','Waiting for encoder');put('statBandwidth','—');put('statTransferred','—');}

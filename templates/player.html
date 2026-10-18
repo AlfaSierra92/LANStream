@@ -44,6 +44,11 @@
         <label>Audio · Kbps<select id="customAudio"><option>96</option><option selected>128</option><option>160</option><option>192</option><option>256</option></select></label>
         <button type="button" id="applyQuality">Apply quality</button>
       </div>
+      <label for="videoCodecSelect">Video codec</label>
+      <select id="videoCodecSelect" aria-describedby="codecStatus"><option value="auto">Auto · H.264 when transcoding</option></select>
+      {% if audios %}<label for="audioCodecSelect">Audio codec</label><select id="audioCodecSelect" aria-describedby="codecStatus"><option value="auto">Auto · AAC when transcoding</option></select>{% endif %}
+      <p id="codecStatus" class="codec-help" role="status">Open settings to check available codecs.</p>
+      <button id="retryCodecs" type="button" class="codec-retry" hidden>Retry codec detection</button>
       {% if audios %}<label for="audioSelect">Audio track</label><select id="audioSelect">{% for a in audios %}<option value="{{ a.index }}">{{ a.language }} · {{ a.codec }}{% if a.title %} · {{ a.title }}{% endif %}</option>{% endfor %}</select>{% endif %}
       {% set text_subs = subtitles | selectattr("text_supported") | list %}
       {% if text_subs %}<label for="subtitleSelect">Subtitles</label><select id="subtitleSelect"><option value="">Subtitles off</option>{% for s in text_subs %}<option value="{{ s.index }}">{{ s.language }}{% if s.title %} · {{ s.title }}{% endif %}</option>{% endfor %}</select>{% endif %}
@@ -91,7 +96,8 @@
  'nativeUrl': url_for('media_file',root_index=root_index,relpath=relpath),
  'transcodeUrl': url_for('transcode',root_index=root_index,relpath=relpath),
  'subtitleUrl': url_for('subtitle',root_index=root_index,relpath=relpath),
- 'statsUrl': url_for('playback_info',root_index=root_index,relpath=relpath)
+ 'statsUrl': url_for('playback_info',root_index=root_index,relpath=relpath),
+ 'codecsUrl': url_for('transcode_codecs')
 }|tojson }}</script>
 <script src="{{ url_for('static',filename='player.js') }}" defer></script>
 </body></html>

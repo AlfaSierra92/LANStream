@@ -2015,7 +2015,7 @@ The ⓘ button (or I key) opens Playback info without interrupting the video. It
   audio channels/sample rate and file bitrate.
 
 Values refresh every second only while the panel is open and the page is visible.
-Unavailable metrics display an em dash. Transcoded codecs follow the actual H.264/AAC
+Unavailable metrics display an em dash. Transcoded codecs follow the selected video/audio
 encoder configuration; output resolution comes from browser metadata. Source values
 come from ffprobe. No repeated ffprobe/encoder tests are run by the diagnostics panel.
 HTTP transfer can finish ahead of playback because the browser buffers the video;
@@ -2026,3 +2026,30 @@ Video preview generation, video thumbnail requests and folder preview scans have
 removed; older instructions about generating video previews no longer apply. Video
 cards use a compact play icon and the detail page shows metadata directly. Image,
 PDF and comic thumbnails are still available. Existing cached files are left in place.
+
+
+## Choosing transcoding codecs
+
+Open the playback gear menu to select Video codec (H.264 / AVC, H.265 / HEVC, AV1)
+and Audio codec (AAC, Opus, MP3). Auto retains direct playback where possible; when
+transcoding it uses H.264 and AAC. An explicit choice forces conversion of the stream.
+Changing codecs keeps the playback position and paused state. These choices are local
+to the current player; they do not change the source file or server configuration.
+
+The menu probes available FFmpeg encoders, checks browser MP4 codec support, and
+disables unavailable choices. An unsupported combination is rejected before changing
+the active stream. If detection fails, use Retry codec detection. Encoder results are
+cached; Activity → Retest transcoder backends clears the codec probe cache as well.
+
+For HEVC or AV1, LANStream first tests the selected GPU backend. If it cannot encode
+that codec, it tests software (libx265 or libsvtav1). If neither works, the codec is
+unavailable. Codec probes use small synthetic inputs and fragmented MP4 muxing. Browser
+compatibility checks are advisory and do not measure real-time decoding performance.
+The menu identifies software encoding; Playback info reports actual output codecs,
+encoder and any software fallback. Audio encoders are AAC, libopus and libmp3lame and
+output stereo at 48 kHz. Existing quality profiles still determine audio bitrate.
+
+Streams remain fragmented MP4, using the hvc1 tag for HEVC. Limited software AV1 uses
+capped CRF with the quality profile's bitrate ceiling; other limited codecs retain
+bitrate target/rate control. HEVC/AV1 software encoding needs more CPU than H.264.
+Selecting codecs does not add tone mapping or change the existing SDR/HDR handling.

@@ -139,6 +139,7 @@ class StreamTracker:
         *,
         start_offset: float = 0.0,
         detail: str = "",
+        technical: dict | None = None,
     ) -> str:
         stream_id = secrets.token_hex(5)
         now = time.monotonic()
@@ -157,6 +158,7 @@ class StreamTracker:
                 "bandwidth_mbps": 0.0,
                 "start_offset": float(start_offset),
                 "detail": detail,
+                "technical": technical or {},
                 "playback_id": request.args.get("playback_id", "")[:64],
                 "owner": session.get("playback_owner"),
             }
@@ -210,7 +212,8 @@ class StreamTracker:
             if not active or now - item["last_sample_monotonic"] > 2:
                 rate = 0
             return {"backend": item["mode"], "detail": item["detail"], "active": active,
-                    "bytes_sent": item["bytes_sent"], "bandwidth_mbps": round(rate, 2)}
+                    "bytes_sent": item["bytes_sent"], "bandwidth_mbps": round(rate, 2),
+                    "technical": item["technical"]}
 
     def snapshot(self) -> list[dict[str, Any]]:
         now = time.monotonic()
@@ -878,6 +881,8 @@ _transcoder_cache = None
 
 def selected_transcoder(force_refresh: bool = False) -> dict:
     global _transcoder_cache
+    if force_refresh:
+        codec_encoder_test.cache_clear()
     if _transcoder_cache is not None and not force_refresh:
         return _transcoder_cache
 
@@ -1732,12 +1737,39 @@ def requested_quality() -> dict:
             "height": height, "video_kbps": bitrate, "audio_kbps": audio}
 
 
+VIDEO_CODECS = {
+    "h264": {"label": "H.264 / AVC", "browser_codec": "avc1.42E01E"},
+    "hevc": {"label": "H.265 / HEVC", "browser_codec": "hvc1.1.6.L93.B0"},
+    "av1": {"label": "AV1", "browser_codec": "av01.0.08M.08"},
+}
+AUDIO_CODECS = {
+    "aac": {"label": "AAC", "encoder": "aac", "browser_codec": "mp4a.40.2"},
+    "opus": {"label": "Opus", "encoder": "libopus", "browser_codec": "Opus"},
+    "mp3": {"label": "MP3", "encoder": "libmp3lame", "browser_codec": "mp4a.6B"},
+}
+VIDEO_ENCODERS = {
+    "software": {"h264": "libx264", "hevc": "libx265", "av1": "libsvtav1"},
+    **{backend: {codec: f"{codec}_{backend}" for codec in VIDEO_CODECS}
+       for backend in ("vaapi", "qsv", "nvenc", "amf")},
+}
+
+
+def requested_codecs() -> tuple[str, str]:
+    video = request.args.get("video_codec", "auto")
+    audio = request.args.get("audio_codec", "auto")
+    if video not in {"auto", *VIDEO_CODECS} or audio not in {"auto", *AUDIO_CODECS}:
+        abort(400, description="Unknown video or audio codec")
+    return ("h264" if video == "auto" else video, "aac" if audio == "auto" else audio)
+
+
 def transcode_command(
     backend: str,
     source: Path,
     audio_index: int | None,
     start: float,
     quality: dict | None = None,
+    video_codec: str = "h264",
+    audio_codec: str = "aac",
 ) -> list[str]:
     quality = quality or QUALITY_PROFILES["auto"]
     limited = bool(quality["video_kbps"])
@@ -1754,6 +1786,7 @@ def transcode_command(
     if backend == "vaapi":
         filters.append("hwupload")
     cmd += ["-vf", ",".join(filters)]
+    encoder = VIDEO_ENCODERS[backend][video_codec]
     options = {
         "vaapi": ["-c:v", "h264_vaapi"] + (["-rc_mode", "VBR"] if limited else ["-qp", "24"]),
         "qsv": ["-c:v", "h264_qsv", "-preset", "veryfast", "-look_ahead", "0"] + ([] if limited else ["-global_quality", "24"]),
@@ -1761,16 +1794,81 @@ def transcode_command(
         "amf": ["-c:v", "h264_amf", "-quality", "speed"] + (["-rc", "vbr_peak"] if limited else ["-rc", "cqp", "-qp_i", "24", "-qp_p", "24"]),
         "software": ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency"] + ([] if limited else ["-crf", "23"]),
     }
-    cmd += options[backend]
+    video_options = options[backend]
+    video_options[video_options.index("-c:v") + 1] = encoder
+    if backend == "software" and video_codec == "hevc":
+        video_options = ["-c:v", encoder, "-preset", "veryfast", "-tune", "zerolatency", "-x265-params", "pools=2:log-level=error"] + ([] if limited else ["-crf", "26"])
+    elif backend == "software" and video_codec == "av1":
+        video_options = ["-c:v", encoder, "-preset", "8", "-svtav1-params", "lp=2", "-crf", "32"]
+    cmd += video_options
+    if video_codec == "hevc":
+        cmd += ["-tag:v", "hvc1"]
     if limited:
         bitrate = quality["video_kbps"]
-        cmd += ["-b:v", f"{bitrate}k", "-maxrate", f"{bitrate}k", "-bufsize", f"{bitrate * 2}k"]
-    cmd += ["-bf", "0", "-g", "48"]
+        cmd += ["-b:v", "0" if backend == "software" and video_codec == "av1" else f"{bitrate}k", "-maxrate", f"{bitrate}k", "-bufsize", f"{bitrate * 2}k"]
+    if video_codec != "av1":
+        cmd += ["-bf", "0"]
+    cmd += ["-g", "48"]
     if audio_index is not None:
-        cmd += ["-c:a", "aac", "-b:a", f"{quality['audio_kbps']}k", "-ac", "2"]
+        cmd += ["-c:a", AUDIO_CODECS[audio_codec]["encoder"], "-b:a", f"{quality['audio_kbps']}k", "-ac", "2", "-ar", "48000"]
     cmd += ["-movflags", "+frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset",
             "-frag_duration", "500000", "-flush_packets", "1", "-f", "mp4", "pipe:1"]
     return cmd
+
+
+@lru_cache(maxsize=32)
+def codec_encoder_test(backend: str, codec: str, audio: bool = False) -> tuple[bool, str]:
+    """Probe the actual encoder and fragmented MP4 muxer, once per codec/backend."""
+    if audio:
+        command = [FFMPEG, "-v", "error", "-nostdin", "-f", "lavfi", "-i", "sine=sample_rate=48000",
+                   "-t", "0.1", "-c:a", AUDIO_CODECS[codec]["encoder"], "-b:a", "128k", "-ac", "2",
+                   "-movflags", "+frag_keyframe+empty_moov", "-f", "mp4", "pipe:1"]
+    else:
+        command = transcode_command(backend, Path("codec-test"), None, 0, QUALITY_PROFILES["480p"], codec)
+        before, after = command.index("-ss"), command.index("-map")
+        command[before:after] = ["-f", "lavfi", "-i", "color=size=320x180:rate=24", "-frames:v", "2"]
+    try:
+        result = subprocess.run(command, capture_output=True, timeout=15)
+        return result.returncode == 0, "" if result.returncode == 0 else result.stderr.decode("utf-8", "replace")[-1500:]
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, str(exc)
+
+
+BACKEND_LABELS = {"software": "Software", "vaapi": "VAAPI", "qsv": "Intel QSV", "nvenc": "NVIDIA NVENC", "amf": "AMD AMF"}
+
+
+def codec_transcoder(transcoder: dict, codec: str) -> tuple[str | None, str]:
+    if not transcoder["ok"]:
+        return None, "No usable transcoder"
+    preferred = transcoder["key"]
+    if codec == "h264":
+        return preferred, ""
+    ok, detail = codec_encoder_test(preferred, codec)
+    if ok:
+        return preferred, ""
+    if preferred != "software":
+        ok, detail = codec_encoder_test("software", codec)
+        if ok:
+            return "software", f"{VIDEO_CODECS[codec]['label']} is unavailable on the selected GPU; using software."
+    return None, detail
+
+
+@app.route("/api/transcode-codecs")
+def transcode_codecs():
+    transcoder = selected_transcoder()
+    videos = []
+    for codec, metadata in VIDEO_CODECS.items():
+        backend, detail = codec_transcoder(transcoder, codec)
+        encoder = VIDEO_ENCODERS[backend][codec] if backend else None
+        videos.append({"id": codec, **metadata, "available": bool(backend), "backend": backend,
+                       "encoder": encoder, "detail": detail})
+    audios = []
+    for codec, metadata in AUDIO_CODECS.items():
+        available, detail = codec_encoder_test("software", codec, True)
+        audios.append({"id": codec, **metadata, "available": available, "detail": detail})
+    response = jsonify({"video": videos, "audio": audios})
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route("/transcode/<int:root_index>/<path:relpath>")
@@ -1781,6 +1879,7 @@ def transcode(root_index, relpath):
         abort(404)
 
     quality = requested_quality()
+    video_codec, audio_codec = requested_codecs()
     transcoder = selected_transcoder()
     if not transcoder["ok"]:
         app.logger.error("No usable transcoder: %s", transcoder["detail"])
@@ -1808,15 +1907,26 @@ def transcode(root_index, relpath):
         if audio_index not in {track["index"] for track in audio_tracks}:
             abort(400)
 
-    cmd = transcode_command(transcoder["key"], source, audio_index, start, quality)
-    app.logger.info("Starting %s transcode: %s", transcoder["label"], " ".join(cmd))
+    backend, fallback = codec_transcoder(transcoder, video_codec)
+    if not backend:
+        return Response(f"No encoder available for {VIDEO_CODECS[video_codec]['label']}.\n{fallback}", status=503, mimetype="text/plain")
+    if audio_index is not None and audio_codec != "aac":
+        supported, detail = codec_encoder_test("software", audio_codec, True)
+        if not supported:
+            return Response(f"Audio encoder unavailable: {detail}", status=503, mimetype="text/plain")
+    encoder = VIDEO_ENCODERS[backend][video_codec]
+    encoder_label = f"{BACKEND_LABELS[backend]} · {encoder}"
+    cmd = transcode_command(backend, source, audio_index, start, quality, video_codec, audio_codec)
+    app.logger.info("Starting %s transcode: %s", encoder_label, " ".join(cmd))
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
 
     stream_id = stream_tracker.start(
-        transcoder["key"],
+        backend,
         source,
         start_offset=start,
-        detail=f"{transcoder['label']} · {quality['label']}",
+        detail=f"{encoder_label} · {VIDEO_CODECS[video_codec]['label']} / {AUDIO_CODECS[audio_codec]['label'] if audio_index is not None else 'No audio'} · {quality['label']}",
+        technical={"video_codec": video_codec, "audio_codec": audio_codec if audio_index is not None else None,
+                   "encoder": encoder, "encoder_label": encoder_label, "fallback": fallback},
     )
 
     def generate():
@@ -1869,7 +1979,7 @@ def transcode(root_index, relpath):
     # The generator uses no request globals. Avoid retaining a Flask request
     # context across cancelled streams when the player switches quality.
     response = Response(generate())
-    response.headers["Content-Type"] = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"'
+    response.headers["Content-Type"] = "video/mp4"
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Accel-Buffering"] = "no"
     return response

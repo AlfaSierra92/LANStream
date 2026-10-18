@@ -107,7 +107,7 @@ Media mounts can stay read-only. Comments and unknown settings are retained.
 
 The video fills the player window. A small overlay holds playback, seeking, volume,
 settings and fullscreen controls, and fades out during playback. Open the gear menu
-to choose quality, audio or subtitles without reserving space below the video.
+to choose quality, video/audio codecs, audio tracks or subtitles without reserving space below the video.
 
 Open **ⓘ Playback info** (keyboard shortcut **I**) for live diagnostics: direct play
 or transcoding and its reason, source/output codecs, actual browser video dimensions,
@@ -124,6 +124,27 @@ while buffered playback continues. No background probing is needed for polling.
 
 Video posters, video thumbnails, and folder preview scans have been removed. Images,
 PDFs and comics keep their thumbnails; existing cache files are not deleted.
+
+### Transcoding codecs
+
+In the player's gear menu, choose **Video codec** (H.264, H.265/HEVC or AV1) and
+**Audio codec** (AAC, Opus or MP3). Auto preserves direct playback when possible and
+uses H.264/AAC if conversion is needed. Choosing an explicit codec forces transcoding
+and preserves your playback position and paused state. Selections apply to that player.
+
+The menu checks the server's encoders and browser MP4 support when opened. Unavailable
+or browser-unsupported codecs are disabled. Unsupported video/audio combinations are
+rejected before switching. Detection is cached; use the Activity page's retest button
+after changing encoders or hardware. The selected GPU backend is used when its codec
+probe succeeds; otherwise LANStream tests the software encoder. The menu labels software
+encoding and Playback info shows the encoder actually used and any fallback.
+
+Software encoders are libx264 (H.264), libx265 (HEVC), and libsvtav1 (AV1); audio uses
+AAC, libopus or libmp3lame. Each must be included in the server's FFmpeg build. Streams
+remain fragmented MP4. Audio is converted to stereo at 48 kHz; bitrate follows the
+selected quality profile. Software AV1 uses capped CRF for limited profiles, with the
+profile's bitrate as its ceiling. HEVC and AV1 software encoding can be demanding.
+Browser capability checks cannot guarantee decoding performance on every device.
 
 ### Playback quality
 
