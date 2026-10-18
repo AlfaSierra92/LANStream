@@ -57,7 +57,7 @@ This makes it particularly useful for:
 - Dedicated browser-based video player
 - Extremely low seek latency and buffering times
 - Audio & subtitle track selection
-- Low-bandwidth mode for congested networks
+- Playback quality presets from 360p to 4K, plus custom resolution and video/audio bitrate controls
 
 ### Transcoding
 
@@ -83,6 +83,53 @@ The active backend and capability-test results can be viewed at:
 ```
 
 
+### Settings UI
+
+Open **Settings** in the top bar, or visit `/settings`, to edit the server port,
+transcoder, media folders, master password and password profiles, including folder
+exclusions. The first password profile is the administrator; other profiles cannot
+view or change settings. In master-password mode the authenticated user can manage
+settings. In passwordless mode settings are available to anyone with access to the app.
+
+Blank password fields keep existing passwords. The first profile shown after saving
+is the administrator. Removing profiles or switching access modes replaces their media
+configuration. Changes apply immediately, except for the listening port, which requires
+a restart. Deployment environment variables still override values saved in `config.txt`;
+Docker port mappings must be changed in the deployment itself.
+
+The configuration location is unchanged (`LANSTREAM_CONFIG_FILE` or the file beside
+the application). Saving uses an atomic file replacement. For Docker, mount the
+configuration's **parent directory** writable and point `LANSTREAM_CONFIG_FILE` at the
+file inside it; a read-only mount or a bind mount of only the file cannot be replaced.
+Media mounts can stay read-only. Comments and unknown settings are retained.
+
+### Playback quality
+
+Choose quality before starting a video or change it in the player. **Auto** uses direct
+playback when possible and transcodes when required. **Original · transcode** always
+converts at source resolution with variable bitrate. Neither mode limits bandwidth.
+
+| Profile | Maximum frame size | Video target | Audio |
+| --- | --- | --- | --- |
+| 4K | 3840 × 2160 | 20 Mbps | 192 Kbps |
+| 1440p | 2560 × 1440 | 12 Mbps | 192 Kbps |
+| 1080p | 1920 × 1080 | 8 Mbps | 192 Kbps |
+| 720p | 1280 × 720 | 4 Mbps | 128 Kbps |
+| 480p | 854 × 480 | 1.5 Mbps | 96 Kbps |
+| 360p | 640 × 360 | 700 Kbps | 96 Kbps |
+
+**Custom** supports maximum heights from 240p to 2160p, video targets from 300 to
+40,000 Kbps and audio from 96 to 256 Kbps. Press **Apply quality** to start the new
+stream. Quality changes preserve playback position and paused state. The player
+also transcodes when selecting another audio track or if direct playback fails.
+
+All limited profiles transcode, preserve the display aspect ratio and avoid upscaling.
+Bitrate figures are encoder targets: audio and container overhead add to network use,
+and short bursts are possible. The same targets apply to software and supported GPU
+backends. Select a starting preset in **Settings → Playback quality**, saved as
+`default_quality=auto` (or `360p`, `480p`, `720p`, `1080p`, `1440p`, `2160p`, `source`).
+The Activity page shows the selected quality for each transcoded stream.
+
 ### Access Control
 
 LANStream can run completely passwordless on a trusted LAN, use a single master password, or define multiple password profiles.
@@ -97,9 +144,9 @@ Profiles can expose different roots and exclude specific subfolders.
 The Windows release is distributed as a portable, self-contained folder.  Download the latest release zip.
 
 1. Extract the release archive.
-2. Edit `config.txt`.
-3. Run `LANStream.exe`.
-4. Open the displayed LAN URL in a browser.
+2. Run `LANStream.exe`.
+3. Open the displayed LAN URL in a browser.
+4. Open **Settings** to configure media folders, access and transcoding (or edit `config.txt` manually).
 
 See [manual.md](manual.md) for detailed setup instructions.
 

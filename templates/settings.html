@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Settings · LANStream{% endblock %}
+{% block content %}
+<div class="settings-page">
+  <a class="back-link" href="{{ url_for('home') }}">← Media</a>
+  <h1>Settings</h1>
+  <p class="settings-intro">Manage your server and media folders. Changes are saved to config.txt.</p>
+  {% if saved %}<div class="settings-notice" role="status">Settings saved. Media access and transcoding changes apply immediately. Restart LANStream if you changed the port.</div>{% endif %}
+  {% if error %}<div class="settings-notice error-box" role="alert">{{ error }} Re-enter any new passwords before saving again.</div>{% endif %}
+  {% if overrides %}<div class="settings-notice">Deployment environment variables override saved values: {{ overrides|join(', ') }}. Update your deployment to change these effective settings.</div>{% endif %}
+  <form method="post" id="settingsForm">
+    <input type="hidden" name="csrf" value="{{ session.settings_csrf }}">
+    <input type="hidden" name="version" value="{{ version }}">
+    <section class="settings-card" aria-labelledby="serverHeading">
+      <h2 id="serverHeading">Server</h2>
+      <div class="settings-grid">
+        <label>Port<input type="number" name="port" min="1" max="65535" required value="{{ values.port }}"><small>Requires a restart. Current startup port: {{ running_port }}. Docker bindings are configured separately.</small></label>
+        <label>Transcoder<select name="transcoder">{% for option in transcoders %}<option value="{{ option }}" {% if values.transcoder == option %}selected{% endif %}>{{ option|upper if option != 'auto' else 'Automatic (recommended)' }}</option>{% endfor %}</select><small>Choose automatic detection or a specific backend. <a href="{{ url_for('transcoder_status_page') }}">View transcoder status</a>.</small></label>
+      </div>
+    </section>
+    <section class="settings-card" aria-labelledby="playbackHeading">
+      <h2 id="playbackHeading">Playback quality</h2>
+      <p class="settings-help">Set the starting quality for new playback sessions. You can change it anytime in the player.</p>
+      <label>Default quality<select name="default_quality">{% for key, profile in quality_profiles.items() %}<option value="{{ key }}" {% if values.default_quality == key %}selected{% endif %}>{{ profile.label }}</option>{% endfor %}</select></label>
+      <div class="quality-guide"><div><strong>Auto</strong><p>Original file when supported, transcoding when needed.</p></div><div><strong>Choose a resolution</strong><p>Control bandwidth with a video bitrate target. Smaller sources stay smaller.</p></div><div><strong>Custom in the player</strong><p>Set resolution, video bitrate and audio bitrate separately.</p></div></div>
+    </section>
+    <section class="settings-card" aria-labelledby="accessHeading">
+      <h2 id="accessHeading">Access &amp; media</h2>
+      <label>Access mode<select name="mode" id="accessMode"><option value="none" {% if mode == 'none' %}selected{% endif %}>No password — trusted LAN</option><option value="master" {% if mode == 'master' %}selected{% endif %}>Master password</option><option value="profiles" {% if mode == 'profiles' %}selected{% endif %}>Password profiles</option></select></label>
+      <p class="settings-help">Switching access modes replaces the active folder configuration with the fields shown below.</p>
+      <div id="masterFields"><label>New master password<input type="password" name="master_password" autocomplete="new-password" placeholder="Leave blank to keep the current password"><small>Required when enabling a master password for the first time.</small></label></div>
+      <div id="publicFields"><label>Media folders<textarea name="public_paths" rows="8" spellcheck="false" placeholder="/mnt/media/Movies&#10;/mnt/media/TV">{{ public_paths }}</textarea><small>One absolute path per line, on the server running LANStream. Unavailable drives can be configured before they are mounted.</small></label></div>
+      <div id="profileFields">
+        <p class="settings-help">Each profile has its own password and folders. The first profile is the administrator and can edit all settings. Leave an existing password blank to keep it. Changing the order changes the administrator.</p>
+        <p class="settings-help">Put exclusions after the folder they belong to, for example <code>-/Private</code>.</p>
+        <div id="profiles">
+        {% for profile in profiles %}
+          <fieldset class="profile-card">
+            <legend>Password profile</legend>
+            <input type="hidden" name="profile_row" value="{{ loop.index0 }}">
+            <input type="hidden" name="original_{{ loop.index0 }}" value="{{ profile.original }}">
+            <label>New password<input type="password" name="password_{{ loop.index0 }}" autocomplete="new-password" placeholder="Leave blank to keep current password"></label>
+            <label>Folders and exclusions<textarea name="paths_{{ loop.index0 }}" rows="6" spellcheck="false">{{ profile.paths }}</textarea></label>
+            <button type="button" class="remove-profile">Remove profile</button>
+          </fieldset>
+        {% endfor %}
+        </div>
+        <button type="button" id="addProfile">+ Add profile</button>
+      </div>
+    </section>
+    <div class="settings-actions"><button type="submit" class="primary">Save settings</button><a href="{{ url_for('home') }}">Cancel</a></div>
+  </form>
+</div>
+<template id="profileTemplate">
+  <fieldset class="profile-card">
+    <legend>New password profile</legend>
+    <input type="hidden" name="profile_row">
+    <input type="hidden" data-field="original" value="">
+    <label>Password<input type="password" data-field="password" autocomplete="new-password" required></label>
+    <label>Folders and exclusions<textarea data-field="paths" rows="6" spellcheck="false" placeholder="/mnt/media/Movies&#10;-/Private"></textarea></label>
+    <button type="button" class="remove-profile">Remove profile</button>
+  </fieldset>
+</template>
+{% endblock %}
+{% block scripts %}
+<script>
+const mode = document.getElementById('accessMode');
+function updateMode() {
+  for (const [id, visible] of [['masterFields', mode.value === 'master'], ['publicFields', mode.value !== 'profiles'], ['profileFields', mode.value === 'profiles']]) {
+    const container = document.getElementById(id);
+    container.hidden = !visible;
+    container.querySelectorAll('input, textarea, button').forEach(field => field.disabled = !visible);
+  }
+}
+mode.addEventListener('change', updateMode);
+let nextProfile = {{ profiles|length }};
+document.getElementById('addProfile').addEventListener('click', () => {
+  const fragment = document.getElementById('profileTemplate').content.cloneNode(true);
+  const row = String(nextProfile++);
+  fragment.querySelector('[name="profile_row"]').value = row;
+  fragment.querySelectorAll('[data-field]').forEach(field => field.name = `${field.dataset.field}_${row}`);
+  const password = fragment.querySelector('[data-field="password"]');
+  document.getElementById('profiles').append(fragment);
+  password.focus();
+});
+document.getElementById('profiles').addEventListener('click', event => {
+  if (event.target.closest('.remove-profile')) event.target.closest('fieldset').remove();
+});
+updateMode();
+</script>
+{% endblock %}

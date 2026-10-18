@@ -11,10 +11,15 @@
 <body>
 <header class="topbar">
   <div class="topbar-left">
-    <a class="brand" href="{{ url_for('home') }}">LANStream</a>
+    <a class="brand" href="{{ url_for('home') }}"><span class="brand-mark" aria-hidden="true">L</span>LANStream</a>
     {% block topbar_filter %}{% endblock %}
   </div>
+  <nav class="topbar-actions" aria-label="Server navigation">
+  <a class="nav-link {% if request.endpoint in ['home','browse','video_detail'] %}active{% endif %}" href="{{ url_for('home') }}">Library</a>
+  <a class="nav-link {% if request.endpoint == 'transcoder_status_page' %}active{% endif %}" href="{{ url_for('transcoder_status_page') }}">Activity</a>
+  {% if can_manage_settings %}<a class="nav-link {% if request.endpoint == 'settings_page' %}active{% endif %}" href="{{ url_for('settings_page') }}">Settings</a>{% endif %}
   {% if session.get('authenticated') %}<a class="logout" href="{{ url_for('logout') }}">Log out</a>{% endif %}
+  </nav>
 </header>
 <main class="page">{% block content %}{% endblock %}</main>
 {% block scripts %}{% endblock %}

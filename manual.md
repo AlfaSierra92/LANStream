@@ -1943,3 +1943,54 @@ Software libx264
 # Version
 
 **LANStream 1.0.0**
+
+
+## Editing settings in the browser
+
+Open **Settings** from the top bar or visit `/settings`. The form edits `config.txt`
+for you: port, transcoder, access mode, master password, media roots, password profiles
+and exclusions. Use absolute paths on the server, one per line. Paths may be saved
+while a drive is offline. For a profile exclusion, put `-/Private` after its root.
+
+The first password profile is the administrator. Other profiles cannot access the
+settings page. With a master password, sign in before editing settings; without
+passwords, everyone who can reach LANStream can edit them. Leave existing password
+fields blank to keep their passwords. Removing a profile or switching access mode
+replaces that media configuration. The first remaining profile becomes administrator.
+
+After saving, media access and transcoder settings apply immediately. Existing sessions
+whose password was changed are asked to sign in again. Restart the server after
+changing its port. Environment variables take precedence over the saved file; the
+page lists active overrides. Docker bindings remain deployment settings.
+
+For writable Docker configuration, mount the containing directory instead of binding
+only `config.txt`, then set `LANSTREAM_CONFIG_FILE` to its path inside that directory.
+The UI saves by replacing the file atomically and reports an error if the mount or
+permissions prevent this. Comments and unrecognized settings are preserved. If another
+editor changes the file while the form is open, reload the page before saving again.
+
+
+## Playback quality profiles
+
+The player now replaces Normal / Low Bandwidth with Auto, Original · transcode,
+360p (700 Kbps), 480p (1.5 Mbps), 720p (4 Mbps), 1080p (8 Mbps), 1440p (12 Mbps),
+and 4K (20 Mbps). The bitrate in each label is the video target; audio and container
+overhead are additional. This replaces the older low-bandwidth configuration
+instructions above. The legacy `low=1` playback URL maps to the 480p profile.
+
+Choose Custom to adjust maximum resolution, video bitrate (300–40000 Kbps) and audio
+bitrate (96, 128, 160, 192 or 256 Kbps), then press Apply quality. Switching quality
+keeps your position and paused state. The player identifies whether the active stream
+is direct or transcoded, and shows its resolution limit and bitrate target. Presets
+also work for videos without audio. Selecting another audio track requires transcoding.
+
+Resolution limits describe a landscape bounding box, preserve display aspect ratio,
+and never enlarge smaller sources. Auto tries direct playback first and falls back
+to transcoding; Original always transcodes at source resolution. Neither imposes a
+bitrate limit. Limited profiles use encoder rate control; they are not a strict
+network traffic cap. Higher presets require sufficient encoder capacity.
+
+Set `default_quality=auto` in config.txt or use Settings → Playback quality to choose
+the default for new sessions. Valid defaults: auto, source, 360p, 480p, 720p, 1080p,
+1440p and 2160p. A selection made on the video details page overrides this default for
+that playback. The Activity page includes each transcoded stream's quality.

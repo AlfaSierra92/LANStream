@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Transcoder Status - LANStream{% endblock %}
 {% block content %}
-<h1>Transcoder status</h1>
+<div class="page-heading"><div><span class="eyebrow">SERVER ACTIVITY</span><h1>Playback &amp; transcoding</h1><p>Live streams, bandwidth and encoder health.</p></div></div>
 
 <div class="status-summary">
   <div><span>Selected backend</span><strong id="backend">Loading…</strong></div>
   <div><span>Active streams</span><strong id="streamCount">0</strong></div>
   <div><span>Preference</span><strong id="preference">auto</strong></div>
-  <div><span>NVENC profile</span><strong id="nvencProfile">—</strong></div>
+
 </div>
 
 <div class="status-actions">
@@ -21,7 +21,7 @@
     <thead>
       <tr>
         <th>File</th>
-        <th>Mode</th>
+        <th>Mode / quality</th>
         <th>Client</th>
         <th>Bandwidth</th>
         <th>Sent</th>
@@ -84,7 +84,6 @@ async function refreshStatus(force = false) {
   document.getElementById("backend").textContent = data.backend || "Unavailable";
   document.getElementById("streamCount").textContent = data.active_stream_count;
   document.getElementById("preference").textContent = data.preference || "auto";
-  document.getElementById("nvencProfile").textContent = data.nvenc_profile || "—";
 
   const tbody = document.querySelector("#streamsTable tbody");
   const table = document.getElementById("streamsTable");
@@ -99,7 +98,7 @@ async function refreshStatus(force = false) {
       const row = document.createElement("tr");
       const cells = [
         stream.filename,
-        modeNames[stream.mode] || stream.mode,
+        (modeNames[stream.mode] || stream.mode) + (stream.detail ? " · " + stream.detail : ""),
         stream.client,
         `${Number(stream.bandwidth_mbps).toFixed(2)} Mbps`,
         formatBytes(stream.bytes_sent),

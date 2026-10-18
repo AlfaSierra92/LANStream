@@ -20,7 +20,11 @@
 </dl>
 {% if audios %}<div class="stream-summary"><strong>Audio tracks</strong><span>{{ audios|length }}</span></div>{% endif %}
 {% if subtitles %}<div class="stream-summary"><strong>Subtitle tracks</strong><span>{{ subtitles|length }}</span></div>{% endif %}
-<a class="primary action-link" href="{{ url_for('player', root_index=root_index, relpath=relpath) }}">Play</a>
+<form action="{{ url_for('player', root_index=root_index, relpath=relpath) }}" class="play-form">
+<label for="startingQuality">Playback quality</label>
+<select name="quality" id="startingQuality">{% for key, profile in quality_profiles.items() %}<option value="{{ key }}" {% if key == default_quality %}selected{% endif %}>{{ profile.label }}</option>{% endfor %}</select>
+<button class="primary" type="submit">▶ Play video</button>
+</form>
 </div></div>
 {% endblock %}
 {% block scripts %}

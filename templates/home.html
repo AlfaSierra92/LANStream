@@ -7,8 +7,8 @@
 {% endblock %}
 
 {% block content %}
-<h1>Media</h1>
-{% if not roots %}<div class="empty">No media paths are configured.</div>{% else %}
+<div class="page-heading"><div><span class="eyebrow">YOUR PERSONAL COLLECTION</span><h1>Your library</h1><p>All your media. Right where you left it.</p></div><span class="count-pill">{{ roots|length }} {{ 'folder' if roots|length == 1 else 'folders' }}</span></div>
+{% if not roots %}<div class="empty setup-empty"><strong>Your library starts here</strong><p>Add the folders you want to browse and stream.</p>{% if can_manage_settings %}<a class="button-link" href="{{ url_for('settings_page') }}">Add media folders →</a>{% endif %}</div>{% else %}
 <div class="folder-grid">
 {% for root in roots %}
 <a class="folder-card filter-item" data-filter-name="{{ root.label|lower }}" href="{{ url_for('browse', root_index=root.index) }}">
@@ -17,7 +17,7 @@
 {% else %}
 <div class="folder-icon"></div>
 {% endif %}
-<div><strong>{{ root.label }}</strong>{% if not root.exists %}<small>Path unavailable</small>{% endif %}</div>
+<div><strong>{{ root.label }}</strong>{% if root.exists %}<small class="folder-caption">Browse collection →</small>{% endif %}{% if not root.exists %}<small>Path unavailable</small>{% endif %}</div>
 </a>
 {% endfor %}
 </div>

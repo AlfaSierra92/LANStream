@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import hashlib
 import mimetypes
 import os
@@ -15,6 +16,7 @@ import threading
 import time
 import io
 import zipfile
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -71,6 +73,7 @@ def load_settings() -> dict[str, str]:
         "use_master_password": "false",
         "master_password": "",
         "transcoder": "auto",
+        "default_quality": "auto",
     }
     for raw in read_config_lines():
         line = raw.strip()
@@ -985,8 +988,189 @@ def password_gate():
         # Passwordless LAN mode. No session is needed.
         return
 
-    if not session.get("authenticated"):
+    if not session.get("authenticated") or active_profile() is None:
+        session.clear()
         return redirect(url_for("login", next=request.path))
+
+
+# The first configured profile owns server administration. Restricted profiles
+# must never receive the configuration or other profiles' passwords.
+_config_lock = threading.Lock()
+TRANSCODER_OPTIONS = ("auto", "vaapi", "qsv", "nvenc", "amf", "software")
+
+
+def can_manage_settings() -> bool:
+    if not authentication_required():
+        return True
+    profiles = load_profiles()
+    return bool(profiles and session.get("authenticated") and
+                session.get("profile_id") == profiles[0]["id"])
+
+
+@app.context_processor
+def settings_navigation():
+    return {"can_manage_settings": can_manage_settings()}
+
+
+def configuration_version() -> str:
+    data = CONFIG_FILE.read_bytes() if CONFIG_FILE.exists() else b""
+    return hashlib.sha256(data).hexdigest()
+
+
+def editable_libraries() -> tuple[str, list[dict]]:
+    public = []
+    profiles = []
+    current = public
+    for raw in read_config_lines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("<") and line.endswith(">"):
+            profiles.append({"original": str(len(profiles)), "password": line[1:-1], "paths": []})
+            current = profiles[-1]["paths"]
+        elif "=" not in line or line.startswith("-"):
+            current.append(line)
+    for profile in profiles:
+        profile["paths"] = "\n".join(profile["paths"])
+    return "\n".join(public), profiles
+
+
+def validate_library(text: str, *, exclusions: bool) -> list[str]:
+    lines = []
+    has_root = False
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if any(ord(c) < 32 for c in line) or "=" in line or line.startswith(("#", "<")):
+            raise ValueError("Enter one absolute folder path per line, without config directives.")
+        if line.startswith("-"):
+            if not exclusions or not has_root or not line[1:].strip():
+                raise ValueError("Exclusions require a profile and must follow a media folder.")
+        else:
+            if not Path(line).expanduser().is_absolute():
+                raise ValueError("Media folders must use absolute paths on the server.")
+            has_root = True
+        lines.append(line)
+    return lines
+
+
+def validate_password(value: str) -> None:
+    if not value or value != value.strip() or any(c in value for c in "<>\r\n") or any(ord(c) < 32 for c in value):
+        raise ValueError("Passwords must be nonempty, without angle brackets, line breaks or outer spaces.")
+
+
+@app.route("/settings", methods=["GET", "POST"])
+def settings_page():
+    global SETTINGS, APP_PASSWORD, USE_MASTER_PASSWORD, TRANSCODER_PREFERENCE, _transcoder_cache
+    if not can_manage_settings():
+        abort(403)
+    session.setdefault("settings_csrf", secrets.token_hex(32))
+    error = None
+    status = 200
+    with _config_lock:
+        values = load_settings()
+        public_paths, profiles = editable_libraries()
+        version = configuration_version()
+        mode = "profiles" if profiles else ("master" if bool_setting(values["use_master_password"]) else "none")
+        if request.method == "POST":
+            if not secrets.compare_digest(session["settings_csrf"].encode(), request.form.get("csrf", "").encode()):
+                abort(400)
+            try:
+                if request.form.get("version") != version:
+                    raise ValueError("Configuration changed since this page was opened. Reload before saving.")
+                port = request.form.get("port", "")
+                if not port.isascii() or not port.isdecimal() or not 1 <= int(port) <= 65535:
+                    raise ValueError("Port must be a number between 1 and 65535.")
+                transcoder = request.form.get("transcoder", "")
+                if transcoder not in TRANSCODER_OPTIONS:
+                    raise ValueError("Select a supported transcoder.")
+                default_quality = request.form.get("default_quality", values["default_quality"])
+                if default_quality not in QUALITY_PROFILES:
+                    raise ValueError("Select a supported default quality.")
+                mode = request.form.get("mode", "")
+                if mode not in {"none", "master", "profiles"}:
+                    raise ValueError("Select an access mode.")
+                master = request.form.get("master_password") or values["master_password"]
+                if master:
+                    validate_password(master)
+                if mode == "master":
+                    validate_password(os.environ.get("LANSTREAM_PASSWORD", master))
+                libraries = []
+                if mode == "profiles":
+                    passwords = set()
+                    for row in request.form.getlist("profile_row"):
+                        original = request.form.get(f"original_{row}", "")
+                        password = request.form.get(f"password_{row}", "")
+                        if not password and original.isdecimal() and int(original) < len(profiles):
+                            password = profiles[int(original)]["password"]
+                        validate_password(password)
+                        if password in passwords:
+                            raise ValueError("Each profile must have a different password.")
+                        passwords.add(password)
+                        libraries.append((password, validate_library(request.form.get(f"paths_{row}", ""), exclusions=True)))
+                    if not libraries:
+                        raise ValueError("Add at least one password profile.")
+                else:
+                    libraries.append((None, validate_library(request.form.get("public_paths", ""), exclusions=False)))
+                # Preserve user comments and settings not owned by this form.
+                retained = []
+                for raw in read_config_lines():
+                    line = raw.strip()
+                    if line.startswith("#") or ("=" in line and not line.startswith(("-", "<")) and line.split("=", 1)[0].strip().lower() not in values):
+                        retained.append(raw)
+                updated = {"port": str(int(port)), "use_master_password": str(mode == "master").lower(),
+                           "master_password": master, "transcoder": transcoder, "default_quality": default_quality}
+                content = retained + [f"{key}={value}" for key, value in updated.items()] + [""]
+                for password, paths in libraries:
+                    if password is not None:
+                        content.append(f"<{password}>")
+                    content.extend(paths)
+                    content.append("")
+                temporary = None
+                try:
+                    # Same-directory replacement leaves the old file intact on failure.
+                    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=CONFIG_FILE.parent, delete=False) as output:
+                        temporary = output.name
+                        output.write("\n".join(content))
+                        output.flush()
+                        os.fsync(output.fileno())
+                    if CONFIG_FILE.exists():
+                        os.chmod(temporary, CONFIG_FILE.stat().st_mode & 0o777)
+                    os.replace(temporary, CONFIG_FILE)
+                finally:
+                    if temporary and os.path.exists(temporary):
+                        os.unlink(temporary)
+                SETTINGS = updated
+                APP_PASSWORD = os.environ.get("LANSTREAM_PASSWORD", updated["master_password"])
+                USE_MASTER_PASSWORD = bool_setting(os.environ.get("LANSTREAM_USE_MASTER_PASSWORD", updated["use_master_password"]))
+                TRANSCODER_PREFERENCE = os.environ.get("LANSTREAM_TRANSCODER", transcoder).strip().lower()
+                _transcoder_cache = None
+                session.clear()
+                if authentication_required():
+                    session["authenticated"] = True
+                    session["profile_id"] = load_profiles()[0]["id"]
+                session["settings_saved"] = True
+                return redirect(url_for("settings_page"))
+            except ValueError as exc:
+                error, status = str(exc), 400
+            except OSError:
+                error, status = "Could not save config.txt. Check write permissions; in Docker, mount its parent directory writable rather than mounting only the file.", 500
+            # Keep the original revision so a stale form cannot overwrite external edits.
+            version = request.form.get("version", "")
+            # Keep the user's edits on validation/save errors; never render passwords.
+            values.update({key: request.form.get(key, values[key]) for key in ("port", "transcoder", "default_quality")})
+            public_paths = request.form.get("public_paths", public_paths)
+            profiles = [{"original": request.form.get(f"original_{row}", ""), "paths": request.form.get(f"paths_{row}", "")} for row in request.form.getlist("profile_row")]
+    response = make_response(render_template(
+        "settings.html", values=values, mode=mode, public_paths=public_paths,
+        profiles=profiles, version=version, error=error,
+        saved=session.pop("settings_saved", False), transcoders=TRANSCODER_OPTIONS,
+        overrides=[name for name in ("LANSTREAM_PORT", "LANSTREAM_PASSWORD", "LANSTREAM_USE_MASTER_PASSWORD", "LANSTREAM_TRANSCODER") if name in os.environ],
+        running_port=SERVER_PORT, quality_profiles=QUALITY_PROFILES,
+    ), status)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -999,7 +1183,7 @@ def login():
         supplied = request.form.get("password", "")
         matched = None
         for profile in load_profiles():
-            if secrets.compare_digest(supplied, profile["password"]):
+            if secrets.compare_digest(supplied.encode("utf-8"), profile["password"].encode("utf-8")):
                 matched = profile
                 break
 
@@ -1368,6 +1552,7 @@ def video_detail(root_index, relpath):
         audios=audios, subtitles=subtitles,
         native=direct_playback_ok(source, info, audios),
         poster_ready=poster.exists(), generation=generation,
+        quality_profiles=QUALITY_PROFILES, default_quality=load_settings().get("default_quality", "auto"),
     )
 
 
@@ -1386,6 +1571,8 @@ def player(root_index, relpath):
         filename=source.name, duration=d, duration_text=fmt_duration(d),
         audios=audios, subtitles=subtitles,
         native=direct_playback_ok(source, info, audios),
+        quality_profiles=QUALITY_PROFILES,
+        default_quality=request.args.get("quality") if request.args.get("quality") in QUALITY_PROFILES else load_settings().get("default_quality", "auto"),
     )
 
 
@@ -1656,89 +1843,79 @@ def image_ready(kind, root_index, relpath):
     })
 
 
+# Fixed targets make quality choices consistent across software and GPU encoders.
+QUALITY_PROFILES = {
+    "auto": {"label": "Auto · original when possible", "width": 0, "height": 0, "video_kbps": 0, "audio_kbps": 160},
+    "source": {"label": "Original · transcode", "width": 0, "height": 0, "video_kbps": 0, "audio_kbps": 192},
+    "2160p": {"label": "4K · 20 Mbps", "width": 3840, "height": 2160, "video_kbps": 20000, "audio_kbps": 192},
+    "1440p": {"label": "1440p · 12 Mbps", "width": 2560, "height": 1440, "video_kbps": 12000, "audio_kbps": 192},
+    "1080p": {"label": "1080p · 8 Mbps", "width": 1920, "height": 1080, "video_kbps": 8000, "audio_kbps": 192},
+    "720p": {"label": "720p · 4 Mbps", "width": 1280, "height": 720, "video_kbps": 4000, "audio_kbps": 128},
+    "480p": {"label": "480p · 1.5 Mbps", "width": 854, "height": 480, "video_kbps": 1500, "audio_kbps": 96},
+    "360p": {"label": "360p · 700 Kbps", "width": 640, "height": 360, "video_kbps": 700, "audio_kbps": 96},
+}
+
+
+def requested_quality() -> dict:
+    # Preserve links made by older players, including the previously ignored low flag.
+    key = request.args.get("quality") or ("480p" if request.args.get("low") == "1" else "auto")
+    if key == "normal":
+        key = "auto"
+    if key in QUALITY_PROFILES:
+        return dict(QUALITY_PROFILES[key])
+    if key != "custom":
+        abort(400, description="Unknown quality profile")
+    try:
+        height = int(request.args.get("height", "720"))
+        bitrate = int(request.args.get("bitrate", "4000"))
+        audio = int(request.args.get("audio_bitrate", "128"))
+    except ValueError:
+        abort(400, description="Invalid custom quality")
+    if height not in {240, 360, 480, 720, 1080, 1440, 2160} or not 300 <= bitrate <= 40000 or audio not in {96, 128, 160, 192, 256}:
+        abort(400, description="Custom quality is outside the supported range")
+    width = {240: 426, 360: 640, 480: 854, 720: 1280, 1080: 1920, 1440: 2560, 2160: 3840}[height]
+    return {"label": f"Custom · {height}p · {bitrate / 1000:g} Mbps", "width": width,
+            "height": height, "video_kbps": bitrate, "audio_kbps": audio}
+
+
 def transcode_command(
     backend: str,
     source: Path,
     audio_index: int | None,
     start: float,
+    quality: dict | None = None,
 ) -> list[str]:
-    cmd = [FFMPEG, "-hide_banner", "-loglevel", "error"]
-
+    quality = quality or QUALITY_PROFILES["auto"]
+    limited = bool(quality["video_kbps"])
+    cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-nostdin"]
     if backend == "vaapi":
         cmd += ["-vaapi_device", VAAPI_DEVICE]
-
-    cmd += [
-        "-ss", f"{max(0.0, start):.3f}",
-        "-i", str(source),
-        "-map", "0:v:0",
-    ]
-
-    if audio_index is not None:
-        cmd += ["-map", f"0:{audio_index}"]
-    else:
-        cmd += ["-an"]
-
+    cmd += ["-ss", f"{max(0.0, start):.3f}", "-i", str(source), "-map", "0:v:0"]
+    cmd += ["-map", f"0:{audio_index}"] if audio_index is not None else ["-an"]
+    filters = []
+    if quality["width"]:
+        # Bound both dimensions, preserve aspect ratio and never enlarge the source.
+        filters.append(f"scale=w='min(iw,{quality['width']})':h='min(ih,{quality['height']})':force_original_aspect_ratio=decrease:force_divisible_by=2")
+    filters.append("format=yuv420p" if backend == "software" else "format=nv12")
     if backend == "vaapi":
-        cmd += [
-            "-vf", "format=nv12,hwupload",
-            "-c:v", "h264_vaapi",
-            "-qp", "24",
-            "-bf", "0",
-            "-g", "48",
-        ]
-    elif backend == "qsv":
-        cmd += [
-            "-vf", "format=nv12",
-            "-c:v", "h264_qsv",
-            "-preset", "veryfast",
-            "-global_quality", "24",
-            "-look_ahead", "0",
-            "-bf", "0",
-            "-g", "48",
-        ]
-    elif backend == "nvenc":
-        cmd += [
-            "-vf", "format=nv12",
-            "-c:v", "h264_nvenc",
-            "-preset", "p3",
-            "-tune", "ll",
-            "-rc", "vbr",
-            "-cq", "23",
-            "-b:v", "0",
-            "-bf", "0",
-            "-g", "48",
-        ]
-    elif backend == "amf":
-        cmd += [
-            "-vf", "format=nv12",
-            "-c:v", "h264_amf",
-            "-quality", "speed",
-            "-rc", "cqp",
-            "-qp_i", "24",
-            "-qp_p", "24",
-            "-bf", "0",
-            "-g", "48",
-        ]
-    else:
-        cmd += [
-            "-vf", "format=yuv420p",
-            "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-crf", "23",
-            "-tune", "zerolatency",
-            "-bf", "0",
-            "-g", "48",
-        ]
-
+        filters.append("hwupload")
+    cmd += ["-vf", ",".join(filters)]
+    options = {
+        "vaapi": ["-c:v", "h264_vaapi"] + (["-rc_mode", "VBR"] if limited else ["-qp", "24"]),
+        "qsv": ["-c:v", "h264_qsv", "-preset", "veryfast", "-look_ahead", "0"] + ([] if limited else ["-global_quality", "24"]),
+        "nvenc": ["-c:v", "h264_nvenc", "-preset", "p3", "-tune", "ll", "-rc", "vbr"] + ([] if limited else ["-cq", "23", "-b:v", "0"]),
+        "amf": ["-c:v", "h264_amf", "-quality", "speed"] + (["-rc", "vbr_peak"] if limited else ["-rc", "cqp", "-qp_i", "24", "-qp_p", "24"]),
+        "software": ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency"] + ([] if limited else ["-crf", "23"]),
+    }
+    cmd += options[backend]
+    if limited:
+        bitrate = quality["video_kbps"]
+        cmd += ["-b:v", f"{bitrate}k", "-maxrate", f"{bitrate}k", "-bufsize", f"{bitrate * 2}k"]
+    cmd += ["-bf", "0", "-g", "48"]
     if audio_index is not None:
-        cmd += ["-c:a", "aac", "-b:a", "160k", "-ac", "2"]
-
-    cmd += [
-        "-movflags", "+frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset",
-        "-frag_duration", "500000",
-        "-flush_packets", "1",
-        "-f", "mp4", "pipe:1",
-    ]
+        cmd += ["-c:a", "aac", "-b:a", f"{quality['audio_kbps']}k", "-ac", "2"]
+    cmd += ["-movflags", "+frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset",
+            "-frag_duration", "500000", "-flush_packets", "1", "-f", "mp4", "pipe:1"]
     return cmd
 
 
@@ -1749,6 +1926,7 @@ def transcode(root_index, relpath):
     if not is_video(source):
         abort(404)
 
+    quality = requested_quality()
     transcoder = selected_transcoder()
     if not transcoder["ok"]:
         app.logger.error("No usable transcoder: %s", transcoder["detail"])
@@ -1760,7 +1938,9 @@ def transcode(root_index, relpath):
     try:
         start = float(request.args.get("start", "0"))
     except ValueError:
-        start = 0.0
+        abort(400)
+    if not math.isfinite(start) or start < 0:
+        abort(400)
 
     audio_index = None
     if request.args.get("audio"):
@@ -1769,7 +1949,12 @@ def transcode(root_index, relpath):
         except ValueError:
             abort(400)
 
-    cmd = transcode_command(transcoder["key"], source, audio_index, start)
+    if audio_index is not None:
+        _, audio_tracks, _ = stream_lists(probe(source))
+        if audio_index not in {track["index"] for track in audio_tracks}:
+            abort(400)
+
+    cmd = transcode_command(transcoder["key"], source, audio_index, start, quality)
     app.logger.info("Starting %s transcode: %s", transcoder["label"], " ".join(cmd))
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
 
@@ -1777,7 +1962,7 @@ def transcode(root_index, relpath):
         transcoder["key"],
         source,
         start_offset=start,
-        detail=transcoder["label"],
+        detail=f"{transcoder['label']} · {quality['label']}",
     )
 
     def generate():
@@ -1827,7 +2012,9 @@ def transcode(root_index, relpath):
                     proc.returncode, stderr.decode("utf-8", "replace")[-4000:]
                 )
 
-    response = Response(stream_with_context(generate()))
+    # The generator uses no request globals. Avoid retaining a Flask request
+    # context across cancelled streams when the player switches quality.
+    response = Response(generate())
     response.headers["Content-Type"] = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"'
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Accel-Buffering"] = "no"

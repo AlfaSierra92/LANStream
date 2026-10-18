@@ -25,21 +25,32 @@
 <button id="back30" type="button" title="Back 30 seconds" aria-label="Back 30 seconds">&lt;&lt;</button>
 <button id="forward30" type="button" title="Forward 30 seconds" aria-label="Forward 30 seconds">&gt;&gt;</button>
 </div>
-{% if audios %}<div class="quality-mode" role="radiogroup" aria-label="Stream quality">
-<label><input type="radio" name="qualityMode" value="normal" checked> Normal</label>
-<label><input type="radio" name="qualityMode" value="low"> Low Bandwidth</label>
+<div class="player-setting quality-setting">
+<label for="qualitySelect">Quality</label>
+<select id="qualitySelect" aria-describedby="qualityDescription">
+{% for key, profile in quality_profiles.items() %}<option value="{{ key }}" {% if key == default_quality %}selected{% endif %}>{{ profile.label }}</option>{% endfor %}
+<option value="custom">Custom…</option>
+</select>
 </div>
+{% if audios %}<div class="player-setting"><label for="audioSelect">Audio</label>
 <select id="audioSelect" title="Audio" aria-label="Audio track">{% for a in audios %}
 <option value="{{ a.index }}">{{ a.language }} · {{ a.codec }}{% if a.title %} · {{ a.title }}{% endif %}</option>
-{% endfor %}</select>{% endif %}
+{% endfor %}</select></div>{% endif %}
 {% set text_subs = subtitles | selectattr("text_supported") | list %}
-{% if text_subs %}<select id="subtitleSelect" title="Subtitles" aria-label="Subtitles"><option value="">Subtitles off</option>{% for s in text_subs %}
-<option value="{{ s.index }}">{{ s.language }}{% if s.title %} · {{ s.title }}{% endif %}</option>{% endfor %}</select>{% endif %}
+{% if text_subs %}<div class="player-setting"><label for="subtitleSelect">Subtitles</label><select id="subtitleSelect" title="Subtitles" aria-label="Subtitles"><option value="">Subtitles off</option>{% for s in text_subs %}
+<option value="{{ s.index }}">{{ s.language }}{% if s.title %} · {{ s.title }}{% endif %}</option>{% endfor %}</select></div>{% endif %}
 <div class="volume-control">
 <span class="volume-label">Vol</span>
 <input id="volume" type="range" min="0" max="1" value="1" step="0.05" aria-label="Volume">
 </div>
 </div>
+<div class="custom-quality" id="customQuality" hidden>
+<label>Maximum resolution<select id="customHeight" aria-label="Custom maximum resolution"><option value="240">240p</option><option value="360">360p</option><option value="480">480p</option><option value="720" selected>720p</option><option value="1080">1080p</option><option value="1440">1440p</option><option value="2160">4K</option></select></label>
+<label>Video · Kbps<input id="customBitrate" type="number" min="300" max="40000" step="100" value="4000"></label>
+<label>Audio · Kbps<select id="customAudio"><option>96</option><option selected>128</option><option>160</option><option>192</option><option>256</option></select></label>
+<button type="button" id="applyQuality">Apply quality</button>
+</div>
+<div class="playback-info"><span class="playback-badge" id="playbackMode">Preparing</span><span id="qualityDescription" aria-live="polite">Choose a quality to balance detail and bandwidth.</span><span class="keyboard-hint">Space · play / pause &nbsp; F · fullscreen</span></div>
 </div>
 </div>
 <script>
@@ -56,11 +67,22 @@ const playerShell=document.getElementById("playerShell"),
 const nativeUrl={{ url_for('media_file',root_index=root_index,relpath=relpath)|tojson }};
 const transcodeBase={{ url_for('transcode',root_index=root_index,relpath=relpath)|tojson }};
 const subtitleBase={{ url_for('subtitle',root_index=root_index,relpath=relpath)|tojson }};
-let logicalOffset=0,started=false,dragging=false,lowBandwidth=false,controlsTimer=null;
+const qualitySelect=document.getElementById("qualitySelect"), customQuality=document.getElementById("customQuality"),
+ customHeight=document.getElementById("customHeight"), customBitrate=document.getElementById("customBitrate"), customAudio=document.getElementById("customAudio");
+const qualityProfiles={{ quality_profiles|tojson }};
+let quality=qualitySelect.value, custom={height:720,bitrate:4000,audio:128};
+let streamIsDirect=false;
+let logicalOffset=0,started=false,dragging=false,controlsTimer=null,forceTranscode=false;
+function updateQualityInfo(){
+ const direct=usingDirect();
+ document.getElementById("playbackMode").textContent=direct?"Direct play":"Transcoding";
+ const profile=qualityProfiles[quality];
+ document.getElementById("qualityDescription").textContent=direct?"Original file · no conversion":quality==="custom"?`Up to ${custom.height}p · video ${custom.bitrate/1000} Mbps + audio ${custom.audio} Kbps`:profile.video_kbps?`Up to ${profile.height}p · video ${profile.video_kbps/1000} Mbps + audio ${profile.audio_kbps} Kbps`:"Source resolution · variable bitrate";
+}
 
 function fmt(sec){sec=Math.max(0,Math.floor(sec||0));const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;return h?`${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`:`${m}:${String(s).padStart(2,"0")}`;}
-function usingDirect(){return nativePlayback&&!lowBandwidth;}
-function logicalTime(){return usingDirect()?(video.currentTime||0):logicalOffset+(video.currentTime||0);}
+function usingDirect(){return nativePlayback&&quality==="auto"&&!forceTranscode&&(!audioSelect||audioSelect.selectedIndex===0);}
+function logicalTime(){return streamIsDirect?(video.currentTime||0):logicalOffset+(video.currentTime||0);}
 function audio(){return audioSelect?audioSelect.value:"";}
 function msg(t){message.textContent=t;message.classList.toggle("hidden",!t);}
 function subtitles(start){
@@ -69,20 +91,23 @@ function subtitles(start){
  const t=document.createElement("track");t.kind="subtitles";t.label="Selected";t.srclang="en";t.default=true;
  t.src=subtitleBase+"?stream="+encodeURIComponent(subtitleSelect.value)+"&start="+encodeURIComponent(start);video.appendChild(t);
 }
-function transcode(at){
+function transcode(at,autoplay=true){
  logicalOffset=Math.max(0,Math.min(totalDuration,at));subtitles(logicalOffset);msg("Starting transcoded stream…");
- video.src=transcodeBase+"?start="+encodeURIComponent(logicalOffset)+"&audio="+encodeURIComponent(audio())+(lowBandwidth?"&low=1":"");
- video.load();video.play().catch(()=>{});
+ const params=new URLSearchParams({start:logicalOffset,audio:audio(),quality});
+ if(quality==="custom"){params.set("height",custom.height);params.set("bitrate",custom.bitrate);params.set("audio_bitrate",custom.audio);}
+ video.src=transcodeBase+"?"+params;video.load();if(autoplay)video.play().catch(()=>{});
 }
-function start(at=0){
+function start(at=0,autoplay=true){
+ updateQualityInfo();
+ streamIsDirect=usingDirect();
  if(usingDirect()){
   if(!started){subtitles(0);video.src=nativeUrl;video.load();}
-  const playAt=()=>{try{video.currentTime=at;}catch(_){} video.play().catch(()=>{});};
+  const playAt=()=>{try{video.currentTime=at;}catch(_){} if(autoplay)video.play().catch(()=>{});};
   if(video.readyState>=1)playAt();else video.addEventListener("loadedmetadata",playAt,{once:true});
- }else transcode(at);
+ }else transcode(at,autoplay);
  started=true;
 }
-function go(t){t=Math.max(0,Math.min(totalDuration,t));if(!started)return start(t);usingDirect()?video.currentTime=t:transcode(t);}
+function go(t){t=Math.max(0,Math.min(totalDuration,t));if(!started)return start(t);usingDirect()?video.currentTime=t:transcode(t,!video.paused);}
 function fullscreenElement(){return document.fullscreenElement||document.webkitFullscreenElement||null;}
 function isFullscreen(){return fullscreenElement()===playerShell;}
 async function toggleFullscreen(){
@@ -99,7 +124,7 @@ async function toggleFullscreen(){
 function clearControlsTimer(){if(controlsTimer!==null){window.clearTimeout(controlsTimer);controlsTimer=null;}}
 function scheduleControlsHide(){
  clearControlsTimer();
- if(!isFullscreen()||video.paused||dragging)return;
+ if(!isFullscreen()||video.paused||dragging||playerControls.contains(document.activeElement))return;
  controlsTimer=window.setTimeout(()=>{if(isFullscreen()&&!video.paused&&!dragging)playerShell.classList.add("controls-hidden");},3000);
 }
 function showControls(){playerShell.classList.remove("controls-hidden");scheduleControlsHide();}
@@ -115,30 +140,40 @@ togglePlay.onclick=()=>{showControls();if(!started)return start(0);video.paused?
 back30.onclick=()=>{showControls();go(logicalTime()-30);};
 forward30.onclick=()=>{showControls();go(logicalTime()+30);};
 video.addEventListener("playing",()=>{msg("");togglePlay.textContent="Pause";scheduleControlsHide();});
+video.addEventListener("loadeddata",()=>{if(video.paused)msg("");});
 video.addEventListener("pause",()=>{togglePlay.textContent="Play";showControls();clearControlsTimer();});
 video.addEventListener("waiting",()=>{if(started)msg("Buffering…");});
-video.addEventListener("error",()=>{const e=video.error;msg("Playback failed"+(e?` (browser error ${e.code})`:"")+". Check /transcoder-status and the LANStream container log.");});
+video.addEventListener("error",()=>{if(streamIsDirect&&!forceTranscode){switchStream(()=>{forceTranscode=true;});return;}const e=video.error;msg("Playback failed"+(e?` (browser error ${e.code})`:"")+". Check /transcoder-status and the LANStream container log.");});
 seek.oninput=()=>{dragging=true;showControls();currentLabel.textContent=fmt(Number(seek.value));};
 seek.onchange=()=>{dragging=false;go(Number(seek.value));scheduleControlsHide();};
 video.addEventListener("timeupdate",()=>{if(dragging)return;const t=Math.min(totalDuration,logicalTime());seek.value=t;currentLabel.textContent=fmt(t);});
 volume.oninput=()=>{video.volume=Number(volume.value);showControls();};
 fullscreenTop.onclick=toggleFullscreen;
 
-document.querySelectorAll('input[name="qualityMode"]').forEach(radio=>{
- radio.addEventListener("change",()=>{
-  showControls();if(!radio.checked)return;
-  const wantLow=radio.value==="low";if(wantLow===lowBandwidth)return;
-  const t=logicalTime();lowBandwidth=wantLow;started=false;logicalOffset=0;start(t);
- });
+function switchStream(change){
+ const at=logicalTime(),autoplay=!video.paused;
+ change();started=false;logicalOffset=0;start(at,autoplay);showControls();
+}
+qualitySelect.addEventListener("change",()=>{
+ customQuality.hidden=qualitySelect.value!=="custom";
+ if(qualitySelect.value==="custom")return;
+ switchStream(()=>{quality=qualitySelect.value;forceTranscode=false;});
 });
-if(audioSelect)audioSelect.onchange=()=>{showControls();if(started&&!usingDirect())go(logicalTime());};
+document.getElementById("applyQuality").addEventListener("click",()=>{
+ if(!customBitrate.reportValidity())return;
+ switchStream(()=>{quality="custom";custom={height:Number(customHeight.value),bitrate:Number(customBitrate.value),audio:Number(customAudio.value)};forceTranscode=false;});
+});
+if(audioSelect)audioSelect.onchange=()=>switchStream(()=>{});
 if(subtitleSelect)subtitleSelect.onchange=()=>{showControls();if(started){usingDirect()?subtitles(0):go(logicalTime());}};
 
 ["pointermove","pointerdown","touchstart"].forEach(type=>playerShell.addEventListener(type,showControls,{passive:true}));
 playerControls.addEventListener("pointerenter",()=>{clearControlsTimer();playerShell.classList.remove("controls-hidden");});
 playerControls.addEventListener("pointerleave",scheduleControlsHide);
+playerControls.addEventListener("focusin",()=>{clearControlsTimer();playerShell.classList.remove("controls-hidden");});
+playerControls.addEventListener("focusout",scheduleControlsHide);
 
 document.addEventListener("keydown",event=>{
+ if(["INPUT","SELECT","TEXTAREA","BUTTON"].includes(event.target.tagName))return;
  if(event.key==="f"||event.key==="F"){event.preventDefault();toggleFullscreen();return;}
  if(event.key===" "&&!["INPUT","SELECT","BUTTON"].includes(event.target.tagName)){event.preventDefault();togglePlay.click();return;}
  showControls();

@@ -14,7 +14,7 @@
 </nav>
 
 {% if folders %}
-<h2>Folders</h2><div class="folder-grid">
+<h2 class="section-heading">Folders <span>{{ folders|length }}</span></h2><div class="folder-grid">
 {% for folder in folders %}
 <a class="folder-card filter-item" data-filter-name="{{ folder.name|lower }}" href="{{ url_for('browse', root_index=root_index, relpath=folder.rel) }}">
 {% if folder.preview %}
@@ -29,7 +29,7 @@
 
 {% macro media_section(title, items, route_name, placeholder) -%}
 {% if items %}
-<h2>{{ title }}</h2><div class="video-grid">
+<h2 class="section-heading">{{ title }} <span>{{ items|length }}</span></h2><div class="video-grid">
 {% for item in items %}
 <a class="video-card filter-item" data-filter-name="{{ item.name|lower }}" href="{{ url_for(route_name, root_index=root_index, relpath=item.rel) }}">
 <div class="thumb-wrap"><div class="thumb-placeholder">{{ placeholder }}</div>
@@ -49,7 +49,7 @@
 {{ media_section("Comics", comics, "document_viewer", "COMIC") }}
 
 {% if texts %}
-<h2>Text</h2><div class="video-grid">
+<h2 class="section-heading">Text <span>{{ texts|length }}</span></h2><div class="video-grid">
 {% for item in texts %}
 <a class="video-card filter-item" data-filter-name="{{ item.name|lower }}" href="{{ url_for('text_viewer', root_index=root_index, relpath=item.rel) }}">
 <div class="thumb-wrap text-thumb"><div class="text-file-icon">TEXT</div></div>
