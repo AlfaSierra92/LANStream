@@ -20,6 +20,7 @@ import tempfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from flask import (
     Flask, Response, abort, jsonify, redirect, render_template, request,
@@ -105,7 +106,7 @@ TRANSCODER_PREFERENCE = os.environ.get(
 
 VIDEO_EXTENSIONS = {
     ".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".mpg", ".mpeg",
-    ".m2ts", ".mts", ".ts", ".wmv", ".flv", ".ogv",
+    ".m2ts", ".mts", ".ts", ".wmv", ".flv", ".ogv", ".strm",
 }
 IMAGE_EXTENSIONS = {
     ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".avif",
@@ -542,6 +543,51 @@ def is_video(path: Path) -> bool:
     return media_kind(path) == "video"
 
 
+def resolve_media_source(source: Path) -> Path | str:
+    """Resolve a STRM pointer without allowing access outside the active profile."""
+    if source.suffix.lower() != ".strm":
+        return source
+    try:
+        with source.open("r", encoding="utf-8-sig") as handle:
+            content = handle.read(65537)
+    except (OSError, UnicodeError):
+        abort(400, description="Unable to read STRM file as UTF-8.")
+    if len(content) > 65536:
+        abort(400, description="STRM file is too large.")
+    lines = [line.strip() for line in content.splitlines()
+             if line.strip() and not line.lstrip().startswith("#")]
+    if len(lines) != 1 or any(ord(char) < 32 or ord(char) == 127 for char in lines[0]):
+        abort(400, description="STRM files must contain a single URL or local video path.")
+    target = lines[0]
+    try:
+        url = urlsplit(target)
+        if url.scheme.lower() in {"http", "https"}:
+            if not url.hostname or url.port == 0 or "|" in target or any(char.isspace() for char in target):
+                raise ValueError("Invalid HTTP URL")
+            return target
+    except ValueError:
+        abort(400, description="Invalid STRM URL.")
+    # Only native absolute paths and relative paths are accepted for local files.
+    # Reject FFmpeg protocols (file:, concat:, etc.) and plugin-specific URLs.
+    candidate = Path(target)
+    if url.scheme and not candidate.is_absolute():
+        abort(400, description="Unsupported STRM protocol. Use HTTP, HTTPS or a local video path.")
+    try:
+        candidate = (source.parent / candidate).resolve()
+        allowed = any(candidate.is_relative_to(root.resolve()) for root in load_roots())
+    except (OSError, RuntimeError, ValueError):
+        abort(400, description="Invalid STRM path.")
+    if not allowed:
+        abort(403)
+    if path_is_excluded(candidate):
+        abort(404)
+    if candidate.suffix.lower() == ".strm":
+        abort(400, description="Nested STRM files are not supported.")
+    if not is_video(candidate):
+        abort(404)
+    return candidate
+
+
 def natural_sort_key(value: str) -> list[Any]:
     return [int(part) if part.isdigit() else part.casefold()
             for part in re.split(r"(\d+)", value)]
@@ -591,16 +637,24 @@ def cache_path(kind: str, root_index: int, root: Path, source: Path) -> Path:
 
 
 def probe(path: Path) -> dict[str, Any]:
+    target = resolve_media_source(path)
     cmd = [
         FFPROBE, "-v", "error",
         "-show_entries",
         "format=duration,size,format_name,bit_rate:"
         "stream=index,codec_type,codec_name,profile,level,width,height,channels,channel_layout,sample_rate,bit_rate,avg_frame_rate,pix_fmt,color_space,color_transfer,color_primaries:"
         "stream_tags=language,title",
-        "-of", "json", str(path),
+        "-of", "json", str(target),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        if path.suffix.lower() == ".strm":
+            abort(504, description="STRM source did not respond in time.")
+        raise
     if proc.returncode:
+        if path.suffix.lower() == ".strm":
+            abort(502, description="Unable to open the STRM media source.")
         raise RuntimeError(proc.stderr.strip() or "ffprobe failed")
     return json.loads(proc.stdout)
 
@@ -819,12 +873,17 @@ def stream_lists(info):
 
 
 def direct_playback_ok(path: Path, info, audios) -> bool:
+    target = resolve_media_source(path)
+    # Remote sources stay on the server so codecs, tracks and authentication
+    # behave consistently and no remote credentials are sent to the browser.
+    if isinstance(target, str):
+        return False
     videos, _, _ = stream_lists(info)
     if not videos or len(audios) > 1:
         return False
     v = videos[0]["codec"]
     a = audios[0]["codec"] if audios else None
-    ext = path.suffix.lower()
+    ext = target.suffix.lower()
     if ext in {".mp4", ".m4v", ".mov"}:
         return v == "h264" and a in {None, "aac", "mp3"}
     if ext == ".webm":
@@ -1478,13 +1537,20 @@ def video_detail(root_index, relpath):
     info = probe(source)
     videos, audios, subtitles = stream_lists(info)
     v = videos[0] if videos else {}
+    size = source.stat().st_size
+    if source.suffix.lower() == ".strm":
+        size = info.get("format", {}).get("size")
+        try:
+            size = int(size) if size is not None else None
+        except (ValueError, TypeError):
+            size = None
 
     return render_template(
         "video.html",
         root_index=root_index, relpath=relpath, filename=source.name,
         parent_rel=parent_relpath(relpath),
-        size=fmt_size(source.stat().st_size),
-        duration_text=fmt_duration(duration_seconds(info)),
+        size=fmt_size(size) if size is not None else "Unknown",
+        duration_text=fmt_duration(duration_seconds(info)) if duration_seconds(info) else "Live / unknown",
         width=v.get("width"), height=v.get("height"),
         video_codec=v.get("codec", "unknown"),
         audios=audios, subtitles=subtitles,
@@ -1563,7 +1629,7 @@ def parse_range_header(range_header: str | None, file_size: int) -> tuple[int, i
         return None
 
 
-def ranged_file_response(source: Path, mimetype: str):
+def ranged_file_response(source: Path, mimetype: str, *, tracked_source: Path | None = None):
     file_size = source.stat().st_size
     requested = request.headers.get("Range")
 
@@ -1572,7 +1638,7 @@ def ranged_file_response(source: Path, mimetype: str):
     if not requested:
         stream_id = stream_tracker.start(
             "direct",
-            source,
+            tracked_source or source,
             detail=f"full file, {file_size} bytes",
         )
 
@@ -1611,7 +1677,7 @@ def ranged_file_response(source: Path, mimetype: str):
 
     stream_id = stream_tracker.start(
         "direct",
-        source,
+        tracked_source or source,
         detail=f"bytes {start}-{end}/{file_size}",
     )
 
@@ -1652,8 +1718,11 @@ def media_file(root_index, relpath):
     if not is_video(source):
         abort(404)
 
-    mimetype = mimetypes.guess_type(str(source))[0] or "application/octet-stream"
-    return ranged_file_response(source, mimetype)
+    target = resolve_media_source(source)
+    if isinstance(target, str):
+        abort(415, description="Remote STRM sources require transcoding.")
+    mimetype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+    return ranged_file_response(target, mimetype, tracked_source=source)
 
 
 def best_cached_image(root_index: int, root: Path, source: Path, requested_kind: str) -> Path | None:
@@ -1764,7 +1833,7 @@ def requested_codecs() -> tuple[str, str]:
 
 def transcode_command(
     backend: str,
-    source: Path,
+    source: Path | str,
     audio_index: int | None,
     start: float,
     quality: dict | None = None,
@@ -1878,6 +1947,7 @@ def transcode(root_index, relpath):
     if not is_video(source):
         abort(404)
 
+    target = resolve_media_source(source)
     quality = requested_quality()
     video_codec, audio_codec = requested_codecs()
     transcoder = selected_transcoder()
@@ -1916,8 +1986,9 @@ def transcode(root_index, relpath):
             return Response(f"Audio encoder unavailable: {detail}", status=503, mimetype="text/plain")
     encoder = VIDEO_ENCODERS[backend][video_codec]
     encoder_label = f"{BACKEND_LABELS[backend]} · {encoder}"
-    cmd = transcode_command(backend, source, audio_index, start, quality, video_codec, audio_codec)
-    app.logger.info("Starting %s transcode: %s", encoder_label, " ".join(cmd))
+    cmd = transcode_command(backend, target, audio_index, start, quality, video_codec, audio_codec)
+    app.logger.info("Starting %s transcode: %s", encoder_label,
+                    source.name if source.suffix.lower() == ".strm" else " ".join(cmd))
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
 
     stream_id = stream_tracker.start(
@@ -1967,6 +2038,9 @@ def transcode(root_index, relpath):
                     stderr = proc.stderr.read()
                 except Exception:
                     pass
+            for pipe in (proc.stdout, proc.stderr):
+                if pipe:
+                    pipe.close()
 
             # A terminated FFmpeg process is expected when the browser stops
             # consuming a stream. Only report genuine unexpected failures.
@@ -2004,6 +2078,7 @@ def subtitle(root_index, relpath):
     source = safe_path(root, relpath)
     if not is_video(source):
         abort(404)
+    target = resolve_media_source(source)
     try:
         idx = int(request.args["stream"])
         start = float(request.args.get("start", "0"))
@@ -2013,7 +2088,7 @@ def subtitle(root_index, relpath):
     proc = subprocess.run([
         FFMPEG, "-hide_banner", "-loglevel", "error",
         "-ss", f"{max(0.0, start):.3f}",
-        "-i", str(source), "-map", f"0:{idx}", "-f", "webvtt", "pipe:1"
+        "-i", str(target), "-map", f"0:{idx}", "-f", "webvtt", "pipe:1"
     ], capture_output=True, timeout=30)
     if proc.returncode:
         abort(415)

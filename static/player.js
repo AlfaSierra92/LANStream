@@ -38,7 +38,7 @@ function subtitles(start){
  track.src=config.subtitleUrl+'?'+new URLSearchParams({stream:subtitleSelect.value,start});video.appendChild(track);
 }
 function transcode(at,autoplay=true){
- logicalOffset=Math.max(0,Math.min(totalDuration,at));newRequest();subtitles(logicalOffset);msg('Starting stream…');
+ logicalOffset=Math.max(0,totalDuration>0?Math.min(totalDuration,at):at);newRequest();subtitles(logicalOffset);msg('Starting stream…');
  const params=new URLSearchParams({start:logicalOffset,audio:audio(),quality,video_codec:videoCodec,audio_codec:audioCodec,playback_id:playbackId});
  if(quality==='custom'){params.set('height',custom.height);params.set('bitrate',custom.bitrate);params.set('audio_bitrate',custom.audio);}
  video.src=config.transcodeUrl+'?'+params;video.load();if(autoplay)video.play().catch(()=>{});
@@ -54,7 +54,7 @@ function start(at=0,autoplay=true){
  }else transcode(at,autoplay);
  started=true;
 }
-function go(at){at=Math.max(0,Math.min(totalDuration,at));if(!started)return start(at);streamIsDirect?video.currentTime=at:transcode(at,!video.paused);}
+function go(at){if(totalDuration<=0)return;at=Math.max(0,Math.min(totalDuration,at));if(!started)return start(at);streamIsDirect?video.currentTime=at:transcode(at,!video.paused);}
 function switchStream(change){const at=logicalTime(),autoplay=!video.paused;change();started=false;logicalOffset=0;start(at,autoplay);showControls();}
 function fullscreenElement(){return document.fullscreenElement||document.webkitFullscreenElement||null;}
 function isFullscreen(){return fullscreenElement()===playerShell;}
@@ -89,7 +89,8 @@ video.addEventListener('error',()=>{if(streamIsDirect&&!forceTranscode){switchSt
 video.addEventListener('ended',()=>{showControls();msg('Playback finished');});
 seek.oninput=()=>{dragging=true;showControls();currentLabel.textContent=fmt(Number(seek.value));};
 seek.onchange=()=>{dragging=false;go(Number(seek.value));scheduleControlsHide();};
-video.addEventListener('timeupdate',()=>{if(dragging)return;const at=Math.min(totalDuration,logicalTime());seek.value=at;currentLabel.textContent=fmt(at);});
+video.addEventListener('timeupdate',()=>{if(dragging)return;const at=totalDuration>0?Math.min(totalDuration,logicalTime()):logicalTime();seek.value=at;currentLabel.textContent=fmt(at);});
+if(totalDuration<=0){seek.disabled=true;el('back30').disabled=true;el('forward30').disabled=true;document.querySelector('.duration-label').textContent='Live / unknown';}
 el('volume').oninput=()=>{video.volume=Number(el('volume').value);showControls();};
 el('fullscreenTop').onclick=toggleFullscreen;
 qualitySelect.onchange=()=>{customQuality.hidden=qualitySelect.value!=='custom';if(qualitySelect.value!=='custom')switchStream(()=>{quality=qualitySelect.value;forceTranscode=false;});};

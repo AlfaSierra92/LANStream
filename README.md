@@ -55,9 +55,31 @@ This makes it particularly useful for:
 - Lazy, cached thumbnails for images, PDFs and comics
 - Video browsing without preview generation
 - Dedicated browser-based video player
+- STRM pointers to HTTP/HTTPS streams and local video files
 - Extremely low seek latency and buffering times
 - Audio & subtitle track selection
 - Playback quality presets from 360p to 4K, plus custom resolution and video/audio bitrate controls
+
+### STRM files
+
+Place a `.strm` file in a configured media folder to show it alongside videos.
+Save it as UTF-8 with one HTTP/HTTPS URL or one local video path, for example:
+
+```text
+https://media.example.com/movie.mp4?token=example
+```
+
+Local paths may be absolute or relative to the STRM file's folder. Targets must
+remain inside the current user's configured media roots and respect exclusions,
+including through symbolic links. Local videos use direct playback when compatible;
+remote sources are transcoded by the server, which must have access to the URL.
+Audio tracks, embedded text subtitles and quality selection work through the usual
+player. Streams without a known duration play with seeking disabled.
+
+Blank lines, `#` comments, Windows line endings and a UTF-8 BOM are accepted.
+Multiple targets, nested STRM pointers, plugin URLs and URL suffixes for custom HTTP
+headers (such as `|User-Agent=...`) are not supported. Unavailable or expired remote
+URLs must be updated in the STRM file.
 
 ### Transcoding
 
