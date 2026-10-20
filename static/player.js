@@ -17,7 +17,7 @@ let controlsTimer=null, controlsHovered=false, playbackId='', lastFrameSample=nu
 let statsTimer=null, statsBusy=false, statsRequest=null;
 
 function fmt(sec){sec=Math.max(0,Math.floor(sec||0));const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;return h?`${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${m}:${String(s).padStart(2,'0')}`;}
-function usingDirect(){return config.native&&quality==='auto'&&videoCodec==='auto'&&audioCodec==='auto'&&!forceTranscode&&(!audioSelect||audioSelect.selectedIndex===0);}
+function usingDirect(){return config.native&&(!config.nativeMime||video.canPlayType(config.nativeMime)!=='')&&quality==='auto'&&videoCodec==='auto'&&audioCodec==='auto'&&!forceTranscode&&(!audioSelect||audioSelect.selectedIndex===0);}
 function logicalTime(){return streamIsDirect?(video.currentTime||0):logicalOffset+(video.currentTime||0);}
 function audio(){return audioSelect?audioSelect.value:'';}
 function msg(text){message.textContent=text;message.classList.toggle('hidden',!text);}

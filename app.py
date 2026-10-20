@@ -21,6 +21,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from flask import (
     Flask, Response, abort, jsonify, redirect, render_template, request,
@@ -872,23 +874,27 @@ def stream_lists(info):
     return videos, audios, subtitles
 
 
-def direct_playback_ok(path: Path, info, audios) -> bool:
+def direct_playback_mimetype(path: Path, info, audios) -> str | None:
     target = resolve_media_source(path)
-    # Remote sources stay on the server so codecs, tracks and authentication
-    # behave consistently and no remote credentials are sent to the browser.
-    if isinstance(target, str):
-        return False
+    remote = isinstance(target, str)
+    ext = Path(urlsplit(target).path).suffix.lower() if remote else target.suffix.lower()
+    formats = set(info.get("format", {}).get("format_name", "").split(","))
     videos, _, _ = stream_lists(info)
-    if not videos or len(audios) > 1:
-        return False
+    if not videos:
+        return None
     v = videos[0]["codec"]
     a = audios[0]["codec"] if audios else None
-    ext = target.suffix.lower()
-    if ext in {".mp4", ".m4v", ".mov"}:
-        return v == "h264" and a in {None, "aac", "mp3"}
-    if ext == ".webm":
-        return v in {"vp8", "vp9", "av1"} and a in {None, "opus", "vorbis"}
-    return False
+    if remote and ("hls" in formats or ext == ".m3u8"):
+        return "application/vnd.apple.mpegurl" if v == "h264" and a in {None, "aac", "mp3"} else None
+    if ext in {".mp4", ".m4v", ".mov"} or (remote and formats & {"mov", "mp4"}):
+        return "video/mp4" if v == "h264" and a in {None, "aac", "mp3"} else None
+    if ext == ".webm" or (remote and formats == {"webm"}):
+        return "video/webm" if v in {"vp8", "vp9", "av1"} and a in {None, "opus", "vorbis"} else None
+    return None
+
+
+def direct_playback_ok(path: Path, info, audios) -> bool:
+    return direct_playback_mimetype(path, info, audios) is not None
 
 
 def parent_relpath(relpath: str) -> str:
@@ -1585,6 +1591,7 @@ def player(root_index, relpath):
         filename=source.name, duration=d, duration_text=fmt_duration(d),
         audios=audios, subtitles=subtitles, media_info=playback_media_info(info),
         native=direct_playback_ok(source, info, audios),
+        native_mimetype=direct_playback_mimetype(source, info, audios),
         quality_profiles=QUALITY_PROFILES,
         default_quality=request.args.get("quality") if request.args.get("quality") in QUALITY_PROFILES else load_settings().get("default_quality", "auto"),
     )
@@ -1711,6 +1718,65 @@ def ranged_file_response(source: Path, mimetype: str, *, tracked_source: Path | 
     return response
 
 
+def remote_file_response(source: Path, target: str):
+    """Relay the original bytes and ranges without invoking FFmpeg."""
+    headers = {"Accept-Encoding": "identity"}
+    for name in ("Range", "If-Range"):
+        if request.headers.get(name):
+            headers[name] = request.headers[name]
+    try:
+        upstream = urlopen(Request(target, headers=headers), timeout=30)
+    except HTTPError as exc:
+        content_range = exc.headers.get("Content-Range")
+        exc.close()
+        if exc.code == 416:
+            response = Response(status=416)
+            if content_range:
+                response.headers["Content-Range"] = content_range
+            return response
+        abort(502, description="Unable to open the STRM media source.")
+    except (TimeoutError, URLError):
+        abort(502, description="Unable to open the STRM media source.")
+
+    content_type = upstream.headers.get("Content-Type", "")
+    if Path(urlsplit(target).path).suffix.lower() == ".m3u8" or "mpegurl" in content_type.lower():
+        # Let native HLS players resolve playlists, segments and keys relative
+        # to the upstream URL rather than the LANStream /media route.
+        location = upstream.geturl()
+        upstream.close()
+        response = redirect(location)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    stream_id = stream_tracker.start("direct", source, detail="Original remote stream · no conversion")
+    closed = False
+
+    def close():
+        nonlocal closed
+        if not closed:
+            closed = True
+            upstream.close()
+            stream_tracker.stop(stream_id)
+
+    def generate():
+        try:
+            while chunk := upstream.read(256 * 1024):
+                stream_tracker.add_bytes(stream_id, len(chunk))
+                yield chunk
+        finally:
+            close()
+
+    response = Response(generate(), status=upstream.status,
+                        content_type=content_type or "application/octet-stream")
+    for name in ("Content-Length", "Content-Range", "Accept-Ranges", "Content-Encoding", "ETag", "Last-Modified"):
+        if upstream.headers.get(name):
+            response.headers[name] = upstream.headers[name]
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Accel-Buffering"] = "no"
+    response.call_on_close(close)
+    return response
+
+
 @app.route("/media/<int:root_index>/<path:relpath>")
 def media_file(root_index, relpath):
     root = get_root(root_index)
@@ -1720,7 +1786,7 @@ def media_file(root_index, relpath):
 
     target = resolve_media_source(source)
     if isinstance(target, str):
-        abort(415, description="Remote STRM sources require transcoding.")
+        return remote_file_response(source, target)
     mimetype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
     return ranged_file_response(target, mimetype, tracked_source=source)
 

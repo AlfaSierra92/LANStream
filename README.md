@@ -71,8 +71,13 @@ https://media.example.com/movie.mp4?token=example
 
 Local paths may be absolute or relative to the STRM file's folder. Targets must
 remain inside the current user's configured media roots and respect exclusions,
-including through symbolic links. Local videos use direct playback when compatible;
-remote sources are transcoded by the server, which must have access to the URL.
+including through symbolic links. With quality set to **Auto**, local and remote
+videos use direct playback when their container and codecs are compatible. Remote
+MP4 and WebM files are relayed unchanged by the server, including byte ranges for
+seeking; FFmpeg is not used for delivery. Native HLS playback is used when supported
+by the browser and requires browser access to the remote URL. Incompatible sources
+or a failed direct playback attempt automatically fall back to transcoding.
+Selecting a different quality, codec or audio track also uses transcoding.
 Audio tracks, embedded text subtitles and quality selection work through the usual
 player. Streams without a known duration play with seeking disabled.
 

@@ -92,7 +92,7 @@
   </aside>
 </div>
 <script id="playbackConfig" type="application/json">{{ {
- 'native': native, 'duration': duration, 'media': media_info, 'profiles': quality_profiles,
+ 'native': native, 'nativeMime': native_mimetype, 'duration': duration, 'media': media_info, 'profiles': quality_profiles,
  'nativeUrl': url_for('media_file',root_index=root_index,relpath=relpath),
  'transcodeUrl': url_for('transcode',root_index=root_index,relpath=relpath),
  'subtitleUrl': url_for('subtitle',root_index=root_index,relpath=relpath),
