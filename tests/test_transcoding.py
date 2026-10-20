@@ -50,6 +50,21 @@ class QualityTests(unittest.TestCase):
                 self.assertEqual(server.app.test_client().get('/transcode/0/movie.mp4?' + query).status_code, 400)
             process.assert_not_called()
 
+    def test_original_quality_blocks_transcoding_before_encoder_detection(self):
+        with patch.object(server, 'authentication_required', return_value=False), patch.object(server, 'get_root', return_value=Path('/media')), patch.object(server, 'safe_path', return_value=Path('/media/movie.mp4')), patch.object(server, 'is_video', return_value=True), patch.object(server, 'selected_transcoder') as detect, patch.object(server.subprocess, 'Popen') as process:
+            response = server.app.test_client().get('/transcode/0/movie.mp4?quality=source')
+            self.assertEqual(response.status_code, 409)
+            detect.assert_not_called()
+            process.assert_not_called()
+        with self.assertRaises(ValueError):
+            server.transcode_command('software', Path('movie.mp4'), 1, 0, server.QUALITY_PROFILES['source'])
+
+    def test_original_quality_label_and_explicit_source_resolution_transcode(self):
+        self.assertEqual(server.QUALITY_PROFILES['source']['label'], 'Original · no transcoding')
+        command = server.transcode_command('software', Path('movie.mp4'), 1, 0, server.QUALITY_PROFILES['transcode'])
+        self.assertEqual(command[command.index('-c:v') + 1], 'libx264')
+        self.assertIn('-crf', command)
+
     def test_stream_completes_and_releases_tracker(self):
         process = Mock(stdout=io.BytesIO(b'test-mp4'), stderr=io.BytesIO(), returncode=0)
         process.poll.return_value = 0

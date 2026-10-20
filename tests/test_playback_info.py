@@ -74,7 +74,7 @@ class PlaybackInfoTests(unittest.TestCase):
             self.assertNotIn(b'data-ready=', browse.data)
             self.assertNotIn(b'/poster/', details.data)
             schedule.assert_not_called()
-        with patch.object(server.subprocess, 'run') as process:
+        with patch.object(server, 'run_media_command') as process:
             server.generate_image(self.video, self.root / 'thumb.jpg', 360, server.image_scheduler.current_generation(), server.image_scheduler)
             process.assert_not_called()
         self.assertEqual(self.client.get('/thumb/0/movie.mp4').status_code, 404)

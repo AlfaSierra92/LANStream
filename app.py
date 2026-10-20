@@ -31,6 +31,10 @@ from flask import (
 from PIL import Image, ImageOps
 import fitz
 
+from media_runtime import media_runtime
+
+run_media_command = media_runtime.run
+
 def application_dir() -> Path:
     # For a PyInstaller onedir build, editable files belong beside LANStream.exe.
     if getattr(sys, "frozen", False):
@@ -259,10 +263,17 @@ class ImageScheduler:
         self._sequence = 0
         self._queued: set[str] = set()
         self._failed: set[str] = set()
+        self._stopping = threading.Event()
+        self._workers = []
         for i in range(workers):
-            threading.Thread(
+            worker = threading.Thread(
                 target=self._worker, name=f"image-worker-{i}", daemon=True
-            ).start()
+            )
+            self._workers.append(worker)
+            worker.start()
+
+    def shutdown(self):
+        self._stopping.set()
 
     def new_generation(self) -> int:
         with self._lock:
@@ -291,7 +302,8 @@ class ImageScheduler:
         key = str(output)
         with self._lock:
             if (
-                generation != self._generation
+                self._stopping.is_set()
+                or generation != self._generation
                 or key in self._queued
                 or key in self._failed
             ):
@@ -302,11 +314,17 @@ class ImageScheduler:
         self._queue.put((priority, seq, generation, key, source, output, width))
 
     def _worker(self):
-        while True:
-            priority, seq, generation, key, source, output, width = self._queue.get()
+        while not self._stopping.is_set():
+            try:
+                priority, seq, generation, key, source, output, width = self._queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
             try:
                 if generation == self.current_generation():
                     generate_image(source, output, width, generation, self)
+            except Exception:
+                self.mark_failed(generation, output)
+                app.logger.exception("Image worker failed for %s", source)
             finally:
                 with self._lock:
                     self._queued.discard(key)
@@ -314,6 +332,7 @@ class ImageScheduler:
 
 
 image_scheduler = ImageScheduler(2)
+media_runtime.add_cleanup("image-scheduler", image_scheduler.shutdown)
 
 
 def profile_id_for_password(password: str) -> str:
@@ -649,7 +668,7 @@ def probe(path: Path) -> dict[str, Any]:
         "-of", "json", str(target),
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        proc = run_media_command(cmd, capture_output=True, text=True, timeout=30)
     except subprocess.TimeoutExpired:
         if path.suffix.lower() == ".strm":
             abort(504, description="STRM source did not respond in time.")
@@ -663,7 +682,8 @@ def probe(path: Path) -> dict[str, Any]:
 
 def duration_seconds(info: dict[str, Any]) -> float:
     try:
-        return max(0.0, float(info.get("format", {}).get("duration", 0) or 0))
+        duration = float(info.get("format", {}).get("duration", 0) or 0)
+        return max(0.0, duration) if math.isfinite(duration) else 0.0
     except (TypeError, ValueError):
         return 0.0
 
@@ -713,7 +733,7 @@ def _seven_zip_names(source: Path) -> list[str]:
             "or place the 7-Zip executable beside LANStream."
         )
 
-    proc = subprocess.run(
+    proc = run_media_command(
         [SEVEN_ZIP, "l", "-slt", "-ba", str(source)],
         capture_output=True,
         text=True,
@@ -746,7 +766,7 @@ def _seven_zip_read(source: Path, member: str) -> bytes:
             "or place the 7-Zip executable beside LANStream."
         )
 
-    proc = subprocess.run(
+    proc = run_media_command(
         [SEVEN_ZIP, "x", "-so", "-y", str(source), member],
         capture_output=True,
         timeout=60,
@@ -911,7 +931,7 @@ def run_encoder_test(encoder: str, extra_before_input=None, video_filter=None) -
         cmd += ["-vf", video_filter]
     cmd += ["-c:v", encoder, "-f", "null", "-"]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+        proc = run_media_command(cmd, capture_output=True, text=True, timeout=20)
         return proc.returncode == 0, (proc.stderr or "").strip()
     except Exception as exc:
         return False, str(exc)
@@ -1599,7 +1619,7 @@ def player(root_index, relpath):
 
 def parse_range_header(range_header: str | None, file_size: int) -> tuple[int, int] | None:
     """Return inclusive start/end for a single HTTP byte range."""
-    if not range_header or not range_header.startswith("bytes="):
+    if file_size <= 0 or not range_header or not range_header.startswith("bytes="):
         return None
 
     value = range_header[6:].strip()
@@ -1652,7 +1672,7 @@ def ranged_file_response(source: Path, mimetype: str, *, tracked_source: Path | 
         def whole_file():
             try:
                 with source.open("rb", buffering=0) as fh:
-                    while True:
+                    while not media_runtime.stopping.is_set():
                         chunk = fh.read(1024 * 1024)
                         if not chunk:
                             break
@@ -1662,6 +1682,7 @@ def ranged_file_response(source: Path, mimetype: str, *, tracked_source: Path | 
                 stream_tracker.stop(stream_id)
 
         response = Response(whole_file(), status=200, mimetype=mimetype)
+        response.call_on_close(lambda: stream_tracker.stop(stream_id))
         response.headers["Content-Length"] = str(file_size)
         response.headers["Accept-Ranges"] = "bytes"
         response.headers["Cache-Control"] = "private, max-age=0"
@@ -1695,7 +1716,7 @@ def ranged_file_response(source: Path, mimetype: str, *, tracked_source: Path | 
                 # Jump directly to the requested offset, which is important
                 # for NAS-backed files.
                 fh.seek(start, os.SEEK_SET)
-                while remaining > 0:
+                while remaining > 0 and not media_runtime.stopping.is_set():
                     chunk = fh.read(min(1024 * 1024, remaining))
                     if not chunk:
                         break
@@ -1709,8 +1730,8 @@ def ranged_file_response(source: Path, mimetype: str, *, tracked_source: Path | 
         partial_file(),
         status=206,
         mimetype=mimetype,
-        direct_passthrough=True,
     )
+    response.call_on_close(lambda: stream_tracker.stop(stream_id))
     response.headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
     response.headers["Content-Length"] = str(length)
     response.headers["Accept-Ranges"] = "bytes"
@@ -1757,10 +1778,25 @@ def remote_file_response(source: Path, target: str):
             closed = True
             upstream.close()
             stream_tracker.stop(stream_id)
+            media_runtime.remove_cleanup(stream_id)
+
+    def abort_upstream():
+        # Interrupt a read in another request thread before closing the buffered
+        # HTTP response, whose close() otherwise waits for that read to finish.
+        try:
+            upstream.fp.raw._sock.shutdown(socket.SHUT_RDWR)
+        except (AttributeError, OSError):
+            pass
+        close()
+
+    media_runtime.add_cleanup(stream_id, abort_upstream)
 
     def generate():
         try:
-            while chunk := upstream.read(256 * 1024):
+            while not media_runtime.stopping.is_set():
+                chunk = upstream.read(256 * 1024)
+                if not chunk:
+                    break
                 stream_tracker.add_bytes(stream_id, len(chunk))
                 yield chunk
         finally:
@@ -1840,7 +1876,8 @@ def image_ready(kind, root_index, relpath):
 # Fixed targets make quality choices consistent across software and GPU encoders.
 QUALITY_PROFILES = {
     "auto": {"label": "Auto · original when possible", "width": 0, "height": 0, "video_kbps": 0, "audio_kbps": 160},
-    "source": {"label": "Original · transcode", "width": 0, "height": 0, "video_kbps": 0, "audio_kbps": 192},
+    "source": {"label": "Original · no transcoding", "width": 0, "height": 0, "video_kbps": 0, "audio_kbps": 0},
+    "transcode": {"label": "Source resolution · transcode", "width": 0, "height": 0, "video_kbps": 0, "audio_kbps": 192},
     "2160p": {"label": "4K · 20 Mbps", "width": 3840, "height": 2160, "video_kbps": 20000, "audio_kbps": 192},
     "1440p": {"label": "1440p · 12 Mbps", "width": 2560, "height": 1440, "video_kbps": 12000, "audio_kbps": 192},
     "1080p": {"label": "1080p · 8 Mbps", "width": 1920, "height": 1080, "video_kbps": 8000, "audio_kbps": 192},
@@ -1907,6 +1944,8 @@ def transcode_command(
     audio_codec: str = "aac",
 ) -> list[str]:
     quality = quality or QUALITY_PROFILES["auto"]
+    if quality == QUALITY_PROFILES["source"]:
+        raise ValueError("Original quality must not be transcoded")
     limited = bool(quality["video_kbps"])
     cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-nostdin"]
     if backend == "vaapi":
@@ -1963,7 +2002,7 @@ def codec_encoder_test(backend: str, codec: str, audio: bool = False) -> tuple[b
         before, after = command.index("-ss"), command.index("-map")
         command[before:after] = ["-f", "lavfi", "-i", "color=size=320x180:rate=24", "-frames:v", "2"]
     try:
-        result = subprocess.run(command, capture_output=True, timeout=15)
+        result = run_media_command(command, capture_output=True, timeout=15)
         return result.returncode == 0, "" if result.returncode == 0 else result.stderr.decode("utf-8", "replace")[-1500:]
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, str(exc)
@@ -2015,6 +2054,8 @@ def transcode(root_index, relpath):
 
     target = resolve_media_source(source)
     quality = requested_quality()
+    if request.args.get("quality") == "source":
+        abort(409, description="Original quality disables transcoding. Use the original media endpoint.")
     video_codec, audio_codec = requested_codecs()
     transcoder = selected_transcoder()
     if not transcoder["ok"]:
@@ -2055,70 +2096,79 @@ def transcode(root_index, relpath):
     cmd = transcode_command(backend, target, audio_index, start, quality, video_codec, audio_codec)
     app.logger.info("Starting %s transcode: %s", encoder_label,
                     source.name if source.suffix.lower() == ".strm" else " ".join(cmd))
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+    try:
+        proc = media_runtime.popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+    except (OSError, RuntimeError):
+        abort(503, description="Unable to start the media encoder.")
 
     stream_id = stream_tracker.start(
-        backend,
-        source,
-        start_offset=start,
+        backend, source, start_offset=start,
         detail=f"{encoder_label} · {VIDEO_CODECS[video_codec]['label']} / {AUDIO_CODECS[audio_codec]['label'] if audio_index is not None else 'No audio'} · {quality['label']}",
         technical={"video_codec": video_codec, "audio_codec": audio_codec if audio_index is not None else None,
                    "encoder": encoder, "encoder_label": encoder_label, "fallback": fallback},
     )
+    stderr_tail = bytearray()
+
+    def drain_errors():
+        try:
+            if proc.stderr:
+                while chunk := proc.stderr.read(4096):
+                    stderr_tail.extend(chunk)
+                    del stderr_tail[:-4000]
+        except (OSError, ValueError):
+            pass
+
+    error_thread = threading.Thread(target=drain_errors, name="ffmpeg-stderr", daemon=True)
+    error_thread.start()
+    close_lock = threading.Lock()
+    closed = False
+
+    def close(cancelled=True):
+        nonlocal closed
+        with close_lock:
+            if closed:
+                return
+            closed = True
+        try:
+            if not cancelled and proc.poll() is None:
+                try:
+                    proc.wait(timeout=0.2)
+                except subprocess.TimeoutExpired:
+                    cancelled = True
+            media_runtime.stop_process(proc)
+            error_thread.join(timeout=1)
+            for pipe in (proc.stdout, proc.stderr):
+                if pipe:
+                    pipe.close()
+        finally:
+            media_runtime.release(proc)
+            stream_tracker.stop(stream_id)
+        if not cancelled and proc.returncode not in (0, None):
+            app.logger.error("FFmpeg transcode exited %s: %s", proc.returncode,
+                             stderr_tail.decode("utf-8", "replace"))
 
     def generate():
         cancelled = False
-        stderr = b""
         try:
             assert proc.stdout is not None
-            while True:
+            while not media_runtime.stopping.is_set():
                 chunk = proc.stdout.read(256 * 1024)
                 if not chunk:
                     break
                 stream_tracker.add_bytes(stream_id, len(chunk))
                 yield chunk
         except GeneratorExit:
-            # Normal browser behavior: seeking, changing tracks, navigating
-            # away, or closing playback abandons the old HTTP stream.
             cancelled = True
             raise
         except (BrokenPipeError, ConnectionResetError):
             cancelled = True
         finally:
-            stream_tracker.stop(stream_id)
-
-            if proc.poll() is None:
-                cancelled = True
-                proc.terminate()
-                try:
-                    proc.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    try:
-                        proc.wait(timeout=2)
-                    except subprocess.TimeoutExpired:
-                        pass
-
-            if proc.stderr:
-                try:
-                    stderr = proc.stderr.read()
-                except Exception:
-                    pass
-            for pipe in (proc.stdout, proc.stderr):
-                if pipe:
-                    pipe.close()
-
-            # A terminated FFmpeg process is expected when the browser stops
-            # consuming a stream. Only report genuine unexpected failures.
-            if not cancelled and proc.returncode not in (0, None):
-                app.logger.error(
-                    "FFmpeg transcode exited %s: %s",
-                    proc.returncode, stderr.decode("utf-8", "replace")[-4000:]
-                )
+            close(cancelled=cancelled or media_runtime.stopping.is_set())
 
     # The generator uses no request globals. Avoid retaining a Flask request
     # context across cancelled streams when the player switches quality.
     response = Response(generate())
+    response.call_on_close(close)
     response.headers["Content-Type"] = "video/mp4"
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Accel-Buffering"] = "no"
@@ -2151,7 +2201,10 @@ def subtitle(root_index, relpath):
     except (KeyError, ValueError):
         abort(400)
 
-    proc = subprocess.run([
+    if idx < 0 or not math.isfinite(start) or start < 0:
+        abort(400)
+
+    proc = run_media_command([
         FFMPEG, "-hide_banner", "-loglevel", "error",
         "-ss", f"{max(0.0, start):.3f}",
         "-i", str(target), "-map", f"0:{idx}", "-f", "webvtt", "pipe:1"
@@ -2210,4 +2263,8 @@ def forbidden(_):
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=SERVER_PORT, threaded=True)
+    media_runtime.install_signal_handlers()
+    try:
+        app.run(host="0.0.0.0", port=SERVER_PORT, threaded=True)
+    finally:
+        media_runtime.shutdown()

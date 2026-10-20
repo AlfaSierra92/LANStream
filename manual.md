@@ -1972,7 +1972,8 @@ editor changes the file while the form is open, reload the page before saving ag
 
 ## Playback quality profiles
 
-The player now replaces Normal / Low Bandwidth with Auto, Original · transcode,
+The player now replaces Normal / Low Bandwidth with Auto, Original · no transcoding,
+Source resolution · transcode,
 360p (700 Kbps), 480p (1.5 Mbps), 720p (4 Mbps), 1080p (8 Mbps), 1440p (12 Mbps),
 and 4K (20 Mbps). The bitrate in each label is the video target; audio and container
 overhead are additional. This replaces the older low-bandwidth configuration
@@ -1986,12 +1987,16 @@ also work for videos without audio. Selecting another audio track requires trans
 
 Resolution limits describe a landscape bounding box, preserve display aspect ratio,
 and never enlarge smaller sources. Auto tries direct playback first and falls back
-to transcoding; Original always transcodes at source resolution. Neither imposes a
-bitrate limit. Limited profiles use encoder rate control; they are not a strict
+to transcoding. Original delivers the unmodified media and never falls back to
+transcoding; if the browser cannot play it, choose Auto to allow conversion.
+Source resolution · transcode explicitly re-encodes at the original resolution
+with variable bitrate, which can be lower than the source bitrate.
+Limited profiles use encoder rate control; they are not a strict
 network traffic cap. Higher presets require sufficient encoder capacity.
 
 Set `default_quality=auto` in config.txt or use Settings → Playback quality to choose
-the default for new sessions. Valid defaults: auto, source, 360p, 480p, 720p, 1080p,
+the default for new sessions. Use source to disable transcoding.
+Valid defaults: auto, source, transcode, 360p, 480p, 720p, 1080p,
 1440p and 2160p. A selection made on the video details page overrides this default for
 that playback. The Activity page includes each transcoded stream's quality.
 

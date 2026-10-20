@@ -52,17 +52,17 @@ class StrmTests(unittest.TestCase):
     def test_probe_preserves_remote_url_and_supports_bom_comments(self):
         url = 'https://example.com/movie.m3u8?token=a%2Fb&x=2'
         self.write('\ufeff#EXTM3U\n\n' + url + '\n')
-        with patch.object(server.subprocess, 'run', return_value=Mock(returncode=0, stdout=json.dumps(INFO))) as run:
+        with patch.object(server, 'run_media_command', return_value=Mock(returncode=0, stdout=json.dumps(INFO))) as run:
             self.assertEqual(server.probe(self.source), INFO)
             self.assertEqual(run.call_args.args[0][-1], url)
 
     def test_unavailable_remote_source_returns_clear_error(self):
         self.write('https://example.com/expired')
-        with patch.object(server.subprocess, 'run', return_value=Mock(returncode=1, stderr='secret upstream error')):
+        with patch.object(server, 'run_media_command', return_value=Mock(returncode=1, stderr='secret upstream error')):
             response = self.client.get('/play/0/movie.STRM')
             self.assertEqual(response.status_code, 502)
             self.assertNotIn(b'secret upstream error', response.data)
-        with patch.object(server.subprocess, 'run', side_effect=subprocess.TimeoutExpired('ffprobe', 30)):
+        with patch.object(server, 'run_media_command', side_effect=subprocess.TimeoutExpired('ffprobe', 30)):
             self.assertEqual(self.client.get('/video/0/movie.STRM').status_code, 504)
 
     def test_unknown_duration_and_size(self):
@@ -105,6 +105,17 @@ class StrmTests(unittest.TestCase):
         self.write(str(self.video))
         self.assertEqual(self.client.get('/media/0/movie.STRM', buffered=True).data, b'0123456789')
 
+    def test_original_setting_selects_no_transcoding_and_preserves_bytes(self):
+        self.write('video.mp4')
+        with patch.object(server, 'probe', return_value=INFO), patch.object(server, 'load_settings', return_value={'default_quality': 'source'}), patch.object(server.subprocess, 'Popen') as encoder:
+            response = self.client.get('/play/0/movie.STRM')
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(b'value="source" selected>Original', response.data)
+            self.assertIn(b'no transcoding', response.data)
+            response = self.client.get('/media/0/movie.STRM?quality=source', buffered=True)
+            self.assertEqual(response.data, self.video.read_bytes())
+            encoder.assert_not_called()
+
     def test_remote_transcoding_subtitles_and_no_raw_descriptor_delivery(self):
         url = 'https://example.com/stream.m3u8?token=abc'
         self.write(url)
@@ -118,7 +129,7 @@ class StrmTests(unittest.TestCase):
             self.assertEqual(command[command.index('-i') + 1], url)
             self.assertEqual(command[command.index('-ss') + 1], '12.000')
             self.assertEqual(self.tracker.snapshot(), [])
-        with patch.object(server.subprocess, 'run', return_value=Mock(returncode=0, stdout=b'WEBVTT')) as run:
+        with patch.object(server, 'run_media_command', return_value=Mock(returncode=0, stdout=b'WEBVTT')) as run:
             response = self.client.get('/subtitle/0/movie.STRM?stream=2')
             self.assertEqual(response.data, b'WEBVTT')
             command = run.call_args.args[0]

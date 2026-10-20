@@ -176,8 +176,12 @@ Browser capability checks cannot guarantee decoding performance on every device.
 ### Playback quality
 
 Choose quality before starting a video or change it in the player. **Auto** uses direct
-playback when possible and transcodes when required. **Original · transcode** always
-converts at source resolution with variable bitrate. Neither mode limits bandwidth.
+playback when possible and transcodes when required. **Original · no transcoding**
+delivers the original bytes without encoding or a bitrate limit, and never falls
+back to transcoding. If the browser cannot play the original, playback stops with
+an explanatory message. Codec and audio-track conversion controls are disabled
+in this mode. **Source resolution · transcode** explicitly converts at the original
+resolution with variable bitrate; its output bitrate can differ from the source.
 
 | Profile | Maximum frame size | Video target | Audio |
 | --- | --- | --- | --- |
@@ -197,7 +201,8 @@ All limited profiles transcode, preserve the display aspect ratio and avoid upsc
 Bitrate figures are encoder targets: audio and container overhead add to network use,
 and short bursts are possible. The same targets apply to software and supported GPU
 backends. Select a starting preset in **Settings → Playback quality**, saved as
-`default_quality=auto` (or `360p`, `480p`, `720p`, `1080p`, `1440p`, `2160p`, `source`).
+`default_quality=auto` (or `360p`, `480p`, `720p`, `1080p`, `1440p`, `2160p`, `source`, `transcode`).
+Use `source` to disable transcoding for new playback sessions.
 The Activity page shows the selected quality for each transcoded stream.
 
 ### Access Control
@@ -234,6 +239,13 @@ cache/
 Media directories are mounted read-only.
 
 This means the container can be rebuilt or replaced without losing configuration or thumbnail cache data.
+
+The image handles `docker stop` by stopping active media processes and closing
+remote streams when Gunicorn receives SIGTERM. Shutdown has a five-second grace
+period. Rebuild the image and recreate the container to apply changes to the Python
+code or Gunicorn configuration; restarting an existing image does not update it.
+If your deployment overrides the image command, keep
+`gunicorn --config /app/gunicorn.conf.py app:app` so shutdown cleanup is enabled.
 
 NVIDIA NVENC in Docker requires NVIDIA Container Toolkit on the host.
 

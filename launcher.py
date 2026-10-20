@@ -5,21 +5,20 @@ import sys
 
 from waitress import serve
 
-from app import SERVER_PORT, app, selected_transcoder
+from app import SERVER_PORT, app, selected_transcoder, media_runtime
 
 
 def local_ip() -> str:
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.connect(("8.8.8.8", 80))
-        value = sock.getsockname()[0]
-        sock.close()
-        return value
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            return sock.getsockname()[0]
     except Exception:
         return "127.0.0.1"
 
 
 if __name__ == "__main__":
+    media_runtime.install_signal_handlers()
     status = selected_transcoder()
     print("")
     print("LANStream")
@@ -35,3 +34,5 @@ if __name__ == "__main__":
         serve(app, host="0.0.0.0", port=SERVER_PORT, threads=8)
     except KeyboardInterrupt:
         pass
+    finally:
+        media_runtime.shutdown()

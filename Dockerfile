@@ -21,7 +21,7 @@ WORKDIR /app
 COPY requirements-linux.txt /app/requirements-linux.txt
 RUN pip3 install --break-system-packages --no-cache-dir -r /app/requirements-linux.txt
 
-COPY app.py launcher.py /app/
+COPY app.py launcher.py media_runtime.py gunicorn.conf.py /app/
 COPY templates /app/templates
 COPY static /app/static
 
@@ -29,4 +29,4 @@ RUN mkdir -p /cache
 
 EXPOSE 8080
 
-CMD ["gunicorn", "--workers", "1", "--threads", "8", "--timeout", "0", "--bind", "0.0.0.0:8080", "app:app"]
+CMD ["gunicorn", "--config", "gunicorn.conf.py", "app:app"]
