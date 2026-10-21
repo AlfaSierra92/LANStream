@@ -152,6 +152,30 @@ while buffered playback continues. No background probing is needed for polling.
 Video posters, video thumbnails, and folder preview scans have been removed. Images,
 PDFs and comics keep their thumbnails; existing cache files are not deleted.
 
+### Performance
+
+Folder browsing reuses configuration parsing and resolved exclusion paths within each
+request, and uses directory-entry metadata to avoid repeated filesystem queries.
+Configuration changes are picked up on the next request. Cached thumbnails load lazily,
+and folder filtering combines rapid input events into one update per animation frame.
+
+Local video metadata is cached in memory for up to five minutes, with at most 128
+entries per server process. Concurrent requests for the same file share one FFprobe
+operation. File modification, replacement, or a changed local STRM target triggers a
+new probe. STRM access checks still run before cache lookup; remote sources are probed
+fresh. Probe failures are not cached. No cache database or background scan is needed.
+
+A local macOS/Python 3.11 comparison against the previous implementation, using 1,000
+video entries and the median of five warm requests, reduced folder rendering from
+82.80 ms to 30.71 ms and configuration reads from 3,014 to one per request. Repeated
+metadata lookup on a small local MP4 fell from 16.143 ms to 0.009 ms after cache warmup.
+These are local measurements; storage, network and hardware affect actual timings.
+
+Run the regression suite with `python -m unittest discover -s tests -v` and
+`node tests/test_player.js` after installing the applicable requirements file.
+The suite includes real FFmpeg checks when installed and a Gunicorn shutdown check
+on POSIX systems when Gunicorn is available.
+
 ### Transcoding codecs
 
 In the player's gear menu, choose **Video codec** (H.264, H.265/HEVC or AV1) and

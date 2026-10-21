@@ -30,7 +30,7 @@
 <a class="video-card filter-item" data-filter-name="{{ item.name|lower }}" href="{{ url_for(route_name, root_index=root_index, relpath=item.rel) }}">
 <div class="thumb-wrap {% if route_name == 'video_detail' %}video-symbol{% endif %}"><div class="thumb-placeholder">{% if route_name == 'video_detail' %}<span aria-hidden="true">▶</span>{% else %}{{ placeholder }}{% endif %}</div>
 {% if route_name != 'video_detail' %}
-<img class="lazy-thumb {% if not item.thumb_ready %}pending{% endif %}"
+<img loading="lazy" decoding="async" class="lazy-thumb {% if not item.thumb_ready %}pending{% endif %}"
  data-src="{{ url_for('thumbnail', root_index=root_index, relpath=item.rel) }}"
  data-ready="{{ url_for('image_ready', kind='thumbs', root_index=root_index, relpath=item.rel) }}?generation={{ generation }}"
  {% if item.thumb_ready %}src="{{ url_for('thumbnail', root_index=root_index, relpath=item.rel) }}"{% endif %} alt="">
@@ -97,7 +97,10 @@ const filterInput = document.getElementById("folderFilter");
 const filterItems = Array.from(document.querySelectorAll(".filter-item"));
 const filterEmpty = document.getElementById("filterEmpty");
 if (filterInput) {
+  let filterFrame = null;
   const clearAndFilter = () => {
+    if (filterFrame !== null) cancelAnimationFrame(filterFrame);
+    filterFrame = null;
     filterInput.value = "";
     filterItems.forEach((item) => item.classList.remove("filtered-out"));
     if (filterEmpty) filterEmpty.classList.add("hidden");
@@ -105,15 +108,19 @@ if (filterInput) {
   clearAndFilter();
   window.addEventListener("pageshow", clearAndFilter);
   filterInput.addEventListener("input", () => {
-    const query = filterInput.value.trim().toLowerCase();
-    let visible = 0;
-    filterItems.forEach((item) => {
-      const name = item.dataset.filterName || "";
-      const match = !query || name.includes(query);
-      item.classList.toggle("filtered-out", !match);
-      if (match) visible++;
+    if (filterFrame !== null) cancelAnimationFrame(filterFrame);
+    filterFrame = requestAnimationFrame(() => {
+      filterFrame = null;
+      const query = filterInput.value.trim().toLowerCase();
+      let visible = 0;
+      filterItems.forEach((item) => {
+        const name = item.dataset.filterName || "";
+        const match = !query || name.includes(query);
+        if (item.classList.contains("filtered-out") === match) item.classList.toggle("filtered-out", !match);
+        if (match) visible++;
+      });
+      if (filterEmpty) filterEmpty.classList.toggle("hidden", visible !== 0 || !query);
     });
-    if (filterEmpty) filterEmpty.classList.toggle("hidden", visible !== 0 || !query);
   });
 }
 </script>

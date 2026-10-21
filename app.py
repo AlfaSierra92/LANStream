@@ -17,7 +17,7 @@ import time
 import io
 import zipfile
 import tempfile
-from functools import lru_cache
+from functools import lru_cache, wraps
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -26,14 +26,30 @@ from urllib.request import Request, urlopen
 
 from flask import (
     Flask, Response, abort, jsonify, redirect, render_template, request,
-    send_file, session, url_for, make_response,
+    send_file, session, url_for, make_response, g, has_request_context,
 )
 from PIL import Image, ImageOps
 import fitz
 
 from media_runtime import media_runtime
+from media_cache import MetadataCache
 
 run_media_command = media_runtime.run
+
+
+def request_cached(function):
+    """Reuse filesystem/configuration work within one request only."""
+    @wraps(function)
+    def cached(*args):
+        if not has_request_context():
+            return function(*args)
+        cache = g.setdefault("filesystem_cache", {})
+        key = (function, args)
+        if key not in cache:
+            cache[key] = function(*args)
+        return cache[key]
+    return cached
+
 
 def application_dir() -> Path:
     # For a PyInstaller onedir build, editable files belong beside LANStream.exe.
@@ -68,6 +84,7 @@ FFMPEG = find_media_tool("ffmpeg")
 FFPROBE = find_media_tool("ffprobe")
 
 
+@request_cached
 def read_config_lines() -> list[str]:
     if not CONFIG_FILE.exists():
         return []
@@ -339,6 +356,7 @@ def profile_id_for_password(password: str) -> str:
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
+@request_cached
 def config_has_password_sections() -> bool:
     if not CONFIG_FILE.exists():
         return False
@@ -360,6 +378,7 @@ def authentication_required() -> bool:
     return USE_MASTER_PASSWORD and bool(APP_PASSWORD)
 
 
+@request_cached
 def load_profiles() -> list[dict]:
     """
     Parse config.txt.
@@ -490,6 +509,17 @@ def load_roots() -> list[Path]:
     return profile["roots"] if profile else []
 
 
+@request_cached
+def resolved_exclusions(paths: tuple[Path, ...]) -> tuple[Path, ...]:
+    resolved = []
+    for path in paths:
+        try:
+            resolved.append(path.resolve(strict=False))
+        except RuntimeError:
+            continue
+    return tuple(resolved)
+
+
 def path_is_excluded(path: Path) -> bool:
     profile = active_profile()
     if not profile:
@@ -500,9 +530,8 @@ def path_is_excluded(path: Path) -> bool:
     except RuntimeError:
         return True
 
-    for excluded in profile["excluded"]:
+    for excluded_resolved in resolved_exclusions(tuple(profile["excluded"])):
         try:
-            excluded_resolved = excluded.resolve(strict=False)
             if resolved == excluded_resolved:
                 return True
             resolved.relative_to(excluded_resolved)
@@ -523,7 +552,10 @@ def get_root(index: int) -> Path:
     roots = load_roots()
     if index < 0 or index >= len(roots):
         abort(404)
-    root = roots[index]
+    try:
+        root = roots[index].resolve(strict=False)
+    except (OSError, RuntimeError):
+        abort(404)
     if path_is_excluded(root):
         abort(404)
     return root
@@ -544,9 +576,11 @@ def safe_path(root: Path, relative: str) -> Path:
 
 
 def media_kind(path: Path) -> str | None:
-    if not path.is_file():
-        return None
-    suffix = path.suffix.lower()
+    kind = media_kind_for_suffix(path.suffix.lower())
+    return kind if kind and path.is_file() else None
+
+
+def media_kind_for_suffix(suffix: str) -> str | None:
     if suffix in VIDEO_EXTENSIONS:
         return "video"
     if suffix in IMAGE_EXTENSIONS:
@@ -635,6 +669,7 @@ def image_siblings(root: Path, source: Path) -> tuple[str | None, str | None]:
     )
 
 
+@request_cached
 def cache_root_key(root: Path) -> str:
     try:
         resolved = root.resolve(strict=False)
@@ -657,8 +692,22 @@ def cache_path(kind: str, root_index: int, root: Path, source: Path) -> Path:
     return cache_root_dir(kind, root) / rel.parent / f"{rel.name}.jpg"
 
 
+probe_cache = MetadataCache(maxsize=128)
+
+
 def probe(path: Path) -> dict[str, Any]:
     target = resolve_media_source(path)
+    # Resolve permissions and STRM targets on every call, before consulting the
+    # cache. Live/remote sources deliberately retain fresh probe semantics.
+    if isinstance(target, str):
+        return probe_media_target(path, target)
+    stat = target.stat()
+    key = (FFPROBE, str(target), stat.st_dev, stat.st_ino,
+           stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
+    return probe_cache.get(key, lambda: probe_media_target(path, target))
+
+
+def probe_media_target(path: Path, target: Path | str) -> dict[str, Any]:
     cmd = [
         FFPROBE, "-v", "error",
         "-show_entries",
@@ -1167,6 +1216,8 @@ def settings_page():
                     if CONFIG_FILE.exists():
                         os.chmod(temporary, CONFIG_FILE.stat().st_mode & 0o777)
                     os.replace(temporary, CONFIG_FILE)
+                    # The rest of this request must see the newly saved profiles.
+                    g.pop("filesystem_cache", None)
                 finally:
                     if temporary and os.path.exists(temporary):
                         os.unlink(temporary)
@@ -1267,24 +1318,26 @@ def browse(root_index, relpath):
         "video": [], "image": [], "pdf": [], "comic": [], "text": [],
     }
     try:
-        entries = list(current.iterdir())
+        with os.scandir(current) as directory:
+            entries = list(directory)
     except OSError as exc:
         return render_template("error.html", message=f"Unable to read folder: {exc}"), 500
 
-    for entry in entries:
+    for directory_entry in entries:
         try:
+            is_directory = directory_entry.is_dir()
+            kind = None if is_directory else media_kind_for_suffix(Path(directory_entry.name).suffix.lower())
+            if not is_directory and (not kind or not directory_entry.is_file()):
+                continue
+            entry = Path(directory_entry.path)
             if path_is_excluded(entry):
                 continue
-            if entry.is_dir():
+            if is_directory:
                 folder_rel = entry.relative_to(root).as_posix()
                 folders.append({
                     "name": entry.name,
                     "rel": folder_rel,
                 })
-                continue
-
-            kind = media_kind(entry)
-            if not kind:
                 continue
 
             rel = entry.relative_to(root).as_posix()
