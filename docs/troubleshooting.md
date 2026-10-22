@@ -176,6 +176,12 @@ A hardware test skipped on a Mac is not validation of an Intel server.
 
 ## HDR conversion fails or colors look wrong
 
+If the message names Parsed_anull, an audio format_out, and different channel
+layouts such as 5.1.2 → stereo, update app.py. Older HDR commands disabled implicit
+audio converters along with video conversion without providing an explicit audio
+resampler. The current command explicitly downmixes/resamples to the chosen audio
+encoder, while keeping the HDR video graph on VAAPI.
+
 For an error containing "Impossible to convert", a long pixel-format list and
 "Function not implemented", deploy current app.py and tone_mapping.py together.
 Older graphs did not declare the SDR boundary after tonemap_vaapi to FFmpeg's

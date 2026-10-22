@@ -172,6 +172,10 @@ matrix, transfer, primaries and range to FFmpeg's graph negotiation. This preven
 FFmpeg 8.1 from propagating the input BT.2020 matrix to the encoder and inserting
 an incompatible software converter. Automatic conversion filters are disabled for
 the HDR VAAPI graph; both the capability test and playback use this same path.
+That global FFmpeg option also affects audio. HDR VAAPI playback therefore adds
+an explicit aresample filter for stereo downmix, 48 kHz output and the selected
+audio encoder's sample format. This includes multichannel/height-channel sources;
+audio processing remains on CPU, independently of the GPU video surfaces.
 The CPU graph linearizes HDR with zscale, uses floating-point RGB, converts gamut,
 applies Hable and re-encodes BT.709 transfer/matrix/range.
 The output encoder is tagged BT.709 and stale frame side data is deleted after

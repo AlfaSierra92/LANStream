@@ -2189,6 +2189,12 @@ def transcode_command(
         cmd += ["-bf", "0"]
     cmd += ["-g", "48"]
     if audio_index is not None:
+        if backend == 'vaapi' and mapping.active:
+            # -noauto_conversion_filters applies to audio as well as video.
+            # Explicitly downmix/resample, including encoder sample format,
+            # so multichannel/Atmos layouts do not block the HDR video graph.
+            sample_format = {'aac': 'fltp', 'opus': 'flt', 'mp3': 'fltp'}[audio_codec]
+            cmd += ['-af', f'aresample=48000:ochl=stereo:osf={sample_format}']
         cmd += ["-c:a", AUDIO_CODECS[audio_codec]["encoder"], "-b:a", f"{quality['audio_kbps']}k", "-ac", "2", "-ar", "48000"]
     cmd += ["-movflags", "+frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset",
             "-frag_duration", "500000", "-flush_packets", "1", "-f", "mp4", "pipe:1"]

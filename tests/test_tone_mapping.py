@@ -41,6 +41,42 @@ class ToneMappingTests(unittest.TestCase):
             self.assertEqual(command[command.index('-map_metadata') + 1], '-1')
             self.assertLess(command.index('-hwaccel'), command.index('-i'))
 
+    @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'FFmpeg tools required')
+    def test_hdr_vaapi_explicit_audio_downmix_with_automatic_conversion_disabled(self):
+        encoders = subprocess.check_output([server.FFMPEG, '-hide_banner', '-encoders'], stderr=subprocess.DEVNULL).decode()
+        # The explicit height-channel layout also works in versions predating
+        # the "5.1.2" alias. It reproduces the layout in the reported error.
+        layouts = ['mono', '5.1', '7.1', 'FL+FR+FC+LFE+SL+SR+TFL+TFR']
+        for codec, metadata in server.AUDIO_CODECS.items():
+            if metadata['encoder'] not in encoders:
+                continue
+            command = server.transcode_command('vaapi', Path('hdr.mkv'), 1, 0, audio_codec=codec, source_video=HDR10_VIDEO)
+            self.assertIn('-noauto_conversion_filters', command)
+            audio_filter = command[command.index('-af') + 1]
+            for layout in layouts:
+                with self.subTest(codec=codec, layout=layout):
+                    base = [server.FFMPEG, '-v', 'error', '-noauto_conversion_filters', '-f', 'lavfi',
+                            '-i', f'anullsrc=r=44100:cl={layout}', '-t', '0.1']
+                    options = ['-c:a', metadata['encoder'], '-b:a', '128k', '-ac', '2', '-ar', '48000',
+                               '-movflags', '+frag_keyframe+empty_moov', '-f', 'mp4', 'pipe:1']
+                    # Exercise the actual filter/encoder options generated for
+                    # VAAPI without requiring a GPU for this audio regression.
+                    fixed = subprocess.run(base + ['-af', audio_filter] + options,
+                                           capture_output=True, timeout=10)
+                    self.assertEqual(fixed.returncode, 0, fixed.stderr.decode('utf-8', 'replace'))
+                    info = json.loads(subprocess.check_output(
+                        [server.FFPROBE, '-v', 'error', '-show_streams', '-of', 'json', '-i', 'pipe:0'],
+                        input=fixed.stdout, timeout=10))
+                    audio = info['streams'][0]
+                    self.assertEqual(audio['channels'], 2)
+                    self.assertEqual(audio['sample_rate'], '48000')
+                    self.assertEqual(audio['codec_name'], codec)
+
+    def test_silent_hdr_does_not_add_audio_filter(self):
+        command = server.transcode_command('vaapi', Path('hdr.mkv'), None, 0, source_video=HDR10_VIDEO)
+        self.assertIn('-an', command)
+        self.assertNotIn('-af', command)
+
     def test_hlg_and_dolby_vision_profiles_are_not_misidentified(self):
         hlg = {**HDR10_VIDEO, 'color_transfer': 'arib-std-b67'}
         self.assertIn('HLG', tone_mapping_plan(hlg, 'software').label)
