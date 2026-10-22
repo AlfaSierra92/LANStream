@@ -1,5 +1,11 @@
 # Third-Party Licenses
 
+This page preserves third-party attribution and original license texts.
+The Windows build details below describe the named distribution, not every later
+or custom build. The Dockerfile installs the Linux packages specified by its image.
+For installation and behavior, see [README.md](README.md) and
+[manual.md](manual.md). The original license texts below remain intact.
+
 LANStream itself is released under **The Unlicense**.
 
 The Windows distribution of LANStream 1.0.0 includes separately licensed

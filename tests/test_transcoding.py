@@ -13,6 +13,11 @@ from werkzeug.exceptions import BadRequest
 
 
 class QualityTests(unittest.TestCase):
+    def setUp(self):
+        probe = patch.object(server, 'probe', return_value={})
+        probe.start()
+        self.addCleanup(probe.stop)
+
     def test_presets_legacy_and_custom_validation(self):
         for query, expected in [('quality=360p', 700), ('low=1', 1500), ('quality=normal', 0),
                                 ('quality=custom&height=1080&bitrate=6500&audio_bitrate=192', 6500)]:

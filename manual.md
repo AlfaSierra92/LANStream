@@ -1,2060 +1,696 @@
-# LANStream 1.0.0 User Manual
-
-LANStream is a lightweight, database-free video browser and player for local networks.
-
-This manual covers installation, configuration, everyday use, transcoding, Low Bandwidth mode, authentication, troubleshooting, and maintenance for both Windows and Linux/Docker installations.
-
----
-
-## Table of Contents
-
-1. [How LANStream Works](#how-lanstream-works)
-2. [Supported Platforms](#supported-platforms)
-3. [Windows Installation](#windows-installation)
-4. [Linux / Docker Installation](#linux--docker-installation)
-5. [Opening LANStream](#opening-lanstream)
-6. [The config.txt File](#the-configtxt-file)
-7. [Adding Media Folders](#adding-media-folders)
-8. [Authentication and Password Profiles](#authentication-and-password-profiles)
-9. [Browsing Media](#browsing-media)
-10. [Playing Video](#playing-video)
-11. [Direct Playback and Transcoding](#direct-playback-and-transcoding)
-12. [Low Bandwidth Mode](#low-bandwidth-mode)
-13. [Audio Tracks and Subtitles](#audio-tracks-and-subtitles)
-14. [Thumbnail and Preview Cache](#thumbnail-and-preview-cache)
-15. [Transcoder Status Page](#transcoder-status-page)
-16. [Hardware Acceleration](#hardware-acceleration)
-17. [Changing the Listening Port](#changing-the-listening-port)
-18. [Updating LANStream](#updating-lanstream)
-19. [Backing Up LANStream](#backing-up-lanstream)
-20. [Troubleshooting](#troubleshooting)
-21. [Security Notes](#security-notes)
-22. [Supported Video File Extensions](#supported-video-file-extensions)
-23. [Licensing](#licensing)
-
----
-
-# How LANStream Works
-
-LANStream does not maintain a media database.
-
-Instead, it reads your existing folder structure when you browse it. If your files are arranged like this:
-
-```text
-Movies/
-    Alien/
-        Alien.mkv
-    Blade Runner/
-        Blade Runner.mkv
-TV/
-    The Expanse/
-        Season 01/
-        Season 02/
-Home Videos/
-```
-
-LANStream presents those same folders in the browser.
-
-There is no library import, metadata matching, file renaming, or initial scan required.
-
-LANStream performs three main jobs:
-
-1. Displays your existing folders and video files in a browser.
-2. Sends browser-compatible files directly to the client whenever possible.
-3. Uses FFmpeg to transcode files that the browser cannot play directly.
-
-Media files themselves are never intentionally modified.
-
----
-
-# Supported Platforms
-
-## Windows server
-
-LANStream 1.0.0 supports 64-bit Windows systems.
-
-The Windows release is intended to be portable. A typical release folder contains:
-
-```text
-LANStream/
-    LANStream.exe
-    config.txt
-    ffmpeg.exe
-    ffprobe.exe
-    cache/
-    _internal/
-```
-
-No normal installer is required.
-
-## Linux server
-
-LANStream can run in Docker on Linux.
-
-The recommended deployment keeps the following outside the container:
-
-```text
-config.txt
-cache/
-```
-
-Media folders are mounted read-only.
-
-## Client devices
-
-LANStream is accessed through a modern web browser.
-
-Typical clients include:
-
-- Windows PCs
-- Linux PCs
-- macOS systems
-- tablets
-- phones
-- other devices with a reasonably modern HTML5-capable browser
-
-Playback capability depends partly on the browser. If a file cannot be played directly, LANStream attempts to transcode it to browser-compatible H.264/AAC video.
-
----
-
-# Windows Installation
-
-## Using the prebuilt Windows release
-
-The normal Windows release is distributed as a ZIP archive containing the complete portable LANStream folder.
-
-### Step 1: Extract the ZIP
-
-Extract the complete archive to a permanent location.
-
-For example:
-
-```text
-C:\LANStream\
-```
-
-or:
-
-```text
-D:\Applications\LANStream\
-```
-
-Do not run `LANStream.exe` directly from inside the ZIP archive.
-
-## Step 2: Edit config.txt
-
-Open:
-
-```text
-config.txt
-```
-
-in Notepad or another plain-text editor.
-
-At minimum, add one or more media paths below the settings.
-
-Example:
-
-```text
-port=8060
-use_master_password=false
-master_password=
-transcoder=auto
-low_bandwidth_resolution=854x480
-low_bandwidth_bitrate=2M
-
-D:\Movies
-D:\TV
-E:\Home Videos
-```
-
-See [The config.txt File](#the-configtxt-file) for full configuration instructions.
-
-## Step 3: Start LANStream
-
-Double-click:
-
-```text
-LANStream.exe
-```
-
-A console window opens.
-
-The console displays information including:
-
-- LANStream version
-- local URL
-- LAN URL
-- selected transcoder
-
-Keep this window open while using LANStream.
-
-Closing it stops the server.
-
-## Step 4: Windows Firewall
-
-The first time LANStream accepts network connections, Windows Firewall may ask whether to allow access.
-
-For normal home LAN use, allow LANStream on:
-
-```text
-Private networks
-```
-
-Public-network access is generally unnecessary.
-
-## Step 5: Connect from another device
-
-From another computer or device on the same network, open the LAN URL shown in the LANStream console.
-
-For example:
-
-```text
-http://192.168.1.50:8060
-```
-
-The exact IP address will depend on your computer and network.
-
----
-
-# Linux / Docker Installation
-
-LANStream is designed to work well as a Docker container.
-
-The published Linux Easy Config preset can automate the normal Docker deployment.
-
-## Recommended host layout
-
-Keep editable and persistent data outside the container.
-
-A typical layout is:
-
-```text
-/opt/lanstream/
-    config.txt
-    cache/
-```
-
-The application container can then be replaced or rebuilt without losing configuration or thumbnail cache files.
-
-Your actual media may be located elsewhere, for example:
-
-```text
-/mnt/media/
-/mnt/media/Movies/
-/mnt/media/TV/
-```
-
-## config.txt remains editable on the host
-
-LANStream's Docker deployment bind-mounts the host configuration file into the container.
-
-For example:
-
-```text
-/opt/lanstream/config.txt
-```
-
-may be mounted inside the container as:
-
-```text
-/config.txt
-```
-
-The container reads it, but the file itself remains an ordinary Linux file on the host.
-
-You can edit it using any normal text editor:
+# LANStream user manual
+
+This manual covers installation, everyday use and maintenance.
+The [configuration reference](docs/configuration.md) lists exact settings;
+the [architecture guide](docs/architecture.md) explains internal data flow.
+
+## Contents
+
+1. [What LANStream does](#what-lanstream-does)
+2. [Requirements](#requirements)
+3. [Docker installation](#docker-installation)
+4. [Running from source](#running-from-source)
+5. [Windows installation](#windows-installation)
+6. [Settings and first use](#settings-and-first-use)
+7. [Access modes and profiles](#access-modes-and-profiles)
+8. [Browsing libraries](#browsing-libraries)
+9. [Video playback](#video-playback)
+10. [Quality and codecs](#quality-and-codecs)
+11. [Hardware acceleration](#hardware-acceleration)
+12. [HDR and tone mapping](#hdr-and-tone-mapping)
+13. [Audio and subtitles](#audio-and-subtitles)
+14. [Integrated NZBDAV](#integrated-nzbdav)
+15. [STRM files](#strm-files)
+16. [Images, documents, comics and text](#images-documents-comics-and-text)
+17. [Caches and storage](#caches-and-storage)
+18. [Playback diagnostics](#playback-diagnostics)
+19. [Updates, shutdown and backups](#updates-shutdown-and-backups)
+20. [Operational limits](#operational-limits)
+
+## What LANStream does
+
+The **server** runs LANStream, reads media and converts it when necessary.
+The **client** is the browser displaying folders and playing the result.
+A phone or television does not need direct access to the server's filesystem.
+
+Configured folders, called **roots**, appear as libraries on the home page.
+Folder names and layout are preserved. LANStream does not download titles,
+posters, plots or recommendations and does not require a collection database.
+
+Opening a video runs FFprobe to read duration, container, codecs, resolution and
+tracks. The player then requests original delivery or transcoding.
+During transcoding, FFmpeg produces output while the browser receives it; a whole
+converted movie is not prepared first.
+
+Local libraries also support images, PDF, CBZ/CBR and text.
+Integrated NZBDAV supports remote folders and video files.
+There is no persistent watch history or background collection-wide indexing.
+RAM caches and live metrics disappear when the server process stops.
+
+## Requirements
+
+### Server
+
+A built Windows package includes the compiled application and the external tools
+distributed with that release. The Docker image installs Linux dependencies,
+FFmpeg/FFprobe and 7-Zip.
+
+Running from source requires Python compatible with the project syntax
+(Python 3.10 or later), the appropriate requirements file and accessible
+FFmpeg/FFprobe tools. Individual dependency compatibility also depends on the
+Python version and platform.
+
+The process account must be able to read every published folder.
+SMB/NFS shares and external drives must already be accessible to the server's
+operating system. Browser access to a share is not sufficient.
+
+Hardware acceleration requires compatible hardware, drivers, FFmpeg and device
+permissions. CBR requires a working 7-Zip backend; CBZ uses Python's ZIP support.
+CPU HDR conversion additionally requires FFmpeg zscale/libzimg and tonemap.
+VAAPI HDR conversion requires tonemap_vaapi and driver HDR processing support.
+
+### Client
+
+Use a modern browser with HTML5 video and JavaScript enabled.
+Codec playback, fullscreen, frame metrics and native HLS vary by browser/device.
+LANStream does not bundle a JavaScript HLS engine for universal HLS playback.
+
+The client must reach the server's address and published port.
+The server must reach any NZBDAV or STRM source.
+Native HLS may require the client to reach the remote URL directly.
+
+## Docker installation
+
+### Prepare persistent directories
+
+From the project directory:
 
 ```bash
-nano /opt/lanstream/config.txt
+docker build -t lanstream:local .
+mkdir -p runtime/config runtime/cache
+cp examples/config-local.txt runtime/config/config.txt
 ```
 
-or:
+Edit the copied file rather than distributing an existing personal config.txt.
+The [examples](examples/) contain placeholders only.
+
+The local example lists /media/Movies and /media/TV. If /srv/media is mounted at
+/media, create those directories as /srv/media/Movies and /srv/media/TV on the host,
+or adjust the example to match existing directories.
+
+### Start the container
 
 ```bash
-vim /opt/lanstream/config.txt
+docker run -d --name lanstream \
+  --restart unless-stopped \
+  -p 8060:8080 \
+  -e LANSTREAM_CONFIG_FILE=/config/config.txt \
+  -e LANSTREAM_CACHE_DIR=/cache \
+  --mount type=bind,src="$(pwd)/runtime/config",dst=/config \
+  --mount type=bind,src="$(pwd)/runtime/cache",dst=/cache \
+  --mount type=bind,src=/srv/media,dst=/media,readonly \
+  lanstream:local
 ```
 
-Media path changes are read when LANStream pages are loaded. Server-level settings such as the listening port or transcoder selection should be followed by a container restart.
+Mounting the configuration **directory** is intentional: Settings saves by atomic
+file replacement. Binding only the individual config.txt can prevent that operation.
+Configuration must be writable; media can remain read-only.
 
-## Cache directory
+The included Gunicorn configuration binds to 0.0.0.0:8080 with one worker and eight
+threads. Mapping 8060:8080 publishes host port 8060.
+Open http://SERVER-IP:8060, or http://127.0.0.1:8060 on the server itself.
 
-The cache directory should be writable by the container.
+The Dockerfile does not copy your config.txt or automatically redirect the graphics
+cache to /cache. The environment variables and mounts above connect those resources.
 
-For example:
+### Expose hardware
 
-```text
-/opt/lanstream/cache/
-```
-
-The cache contains generated images only. It does not contain your media database because LANStream has no media database.
-
-## Media mounts
-
-Media should normally be mounted read-only.
-
-Example Docker volume concept:
-
-```yaml
-volumes:
-  - /opt/lanstream/config.txt:/config.txt:ro
-  - /opt/lanstream/cache:/cache
-  - /mnt/media:/mnt/media:ro
-```
-
-If `config.txt` contains:
-
-```text
-/mnt/media/Movies
-/mnt/media/TV
-```
-
-those same paths must exist inside the container.
-
-## NVIDIA Docker support
-
-To use NVIDIA NVENC inside Docker:
-
-1. Install the NVIDIA driver on the Linux host.
-2. Install NVIDIA Container Toolkit.
-3. Configure Docker to expose the NVIDIA GPU.
-4. Enable NVIDIA GPU support in the LANStream LEC preset.
-
-LANStream will then test NVENC automatically.
-
-Enabling NVIDIA support does not force NVENC. LANStream still performs its normal encoder tests and selects an available backend.
-
-## Intel / VAAPI support
-
-For Intel hardware acceleration under Linux, the container needs access to:
-
-```text
-/dev/dri
-```
-
-LANStream normally tests:
-
-```text
-/dev/dri/renderD128
-```
-
-for VAAPI.
-
----
-
-# Opening LANStream
-
-LANStream does not require a dedicated client application.
-
-Open a web browser and navigate to:
-
-```text
-http://SERVER-IP:PORT
-```
-
-Example:
-
-```text
-http://192.168.1.50:8060
-```
-
-The default port is:
-
-```text
-8060
-```
-
-If authentication is enabled, LANStream first displays the login page.
-
-If authentication is disabled, LANStream opens directly to the list of configured media roots.
-
----
-
-# The config.txt File
-
-LANStream uses one plain-text configuration file:
-
-```text
-config.txt
-```
-
-The same basic format is used on Windows and Linux.
-
-A complete simple example:
-
-```text
-# LANStream configuration
-
-port=8060
-use_master_password=false
-master_password=
-transcoder=auto
-low_bandwidth_resolution=854x480
-low_bandwidth_bitrate=2M
-
-D:\Movies
-D:\TV
-E:\Home Videos
-```
-
-Lines beginning with:
-
-```text
-#
-```
-
-are comments.
-
-Blank lines are ignored.
-
-## Available settings
-
-### port
-
-```text
-port=8060
-```
-
-Controls the listening port for native Windows operation.
-
-The default is:
-
-```text
-8060
-```
-
-Docker normally overrides the internal application port through its container environment and maps that to the host port selected in the deployment preset.
-
-### use_master_password
-
-```text
-use_master_password=false
-```
-
-Valid values include:
-
-```text
-true
-false
-yes
-no
-on
-off
-1
-0
-```
-
-When enabled, LANStream requires the password specified by `master_password`.
-
-Password-profile sections override master-password mode.
-
-### master_password
-
-```text
-master_password=MyPassword
-```
-
-Used only when:
-
-```text
-use_master_password=true
-```
-
-and no `<password>` profile sections exist.
-
-### transcoder
-
-```text
-transcoder=auto
-```
-
-Available values are:
-
-```text
-auto
-vaapi
-qsv
-nvenc
-amf
-software
-```
-
-`auto` is recommended.
-
-When `auto` is selected, LANStream tests available encoders and chooses the first working option according to the platform-specific preference order.
-
-### low_bandwidth_resolution
-
-Default:
-
-```text
-low_bandwidth_resolution=854x480
-```
-
-This controls the maximum resolution used when the player is switched to Low Bandwidth mode.
-
-The source aspect ratio is preserved.
-
-For example, a 4:3 source constrained to `854x480` may become approximately:
-
-```text
-640x480
-```
-
-rather than being stretched to fill 854x480.
-
-Dimensions are kept encoder-safe and even-numbered.
-
-### low_bandwidth_bitrate
-
-Default:
-
-```text
-low_bandwidth_bitrate=2M
-```
-
-This controls the target video bitrate in Low Bandwidth mode.
-
-Examples:
-
-```text
-low_bandwidth_bitrate=800k
-low_bandwidth_bitrate=1200k
-low_bandwidth_bitrate=2M
-low_bandwidth_bitrate=3M
-```
-
-Low Bandwidth audio is encoded at approximately 128 kbps in addition to the configured video bitrate.
-
----
-
-# Adding Media Folders
-
-When no password profiles are configured, each non-setting line in `config.txt` is treated as a media root.
-
-## Windows examples
-
-```text
-D:\Movies
-D:\TV
-E:\Home Videos
-```
-
-Network UNC paths are also supported:
-
-```text
-\\NAS\Media\Movies
-\\SERVER\Shared Videos
-```
-
-The Windows account running LANStream must have permission to read those paths.
-
-Mapped drive letters may behave differently depending on how LANStream is launched and which Windows account owns the mapping. UNC paths are generally more predictable for network shares.
-
-## Linux examples
-
-```text
-/mnt/media/Movies
-/mnt/media/TV
-/mnt/archive/Home Videos
-```
-
-When using Docker, the path written in `config.txt` must also exist inside the container.
-
-If the host has:
-
-```text
-/mnt/media
-```
-
-and the container mounts it as:
-
-```text
-/mnt/media
-```
-
-then `config.txt` can directly use:
-
-```text
-/mnt/media/Movies
-```
-
-## Multiple roots
-
-You can configure as many roots as needed.
-
-Example:
-
-```text
-D:\Movies
-D:\TV
-E:\Documentaries
-\\NAS\Archive\Home Videos
-```
-
-The LANStream home page displays each root separately.
-
-Roots are sorted alphabetically for display.
-
----
-
-# Authentication and Password Profiles
-
-LANStream supports three access-control modes:
-
-1. No password
-2. One master password
-3. Multiple password profiles with different visible folders
-
----
-
-## Passwordless mode
-
-For a trusted LAN:
-
-```text
-use_master_password=false
-master_password=
-
-D:\Movies
-D:\TV
-```
-
-Users are not prompted to log in.
-
----
-
-## Master-password mode
-
-To require one password for all configured media:
-
-```text
-use_master_password=true
-master_password=ExamplePassword
-
-D:\Movies
-D:\TV
-```
-
-All users who know that password see the same roots.
-
----
-
-## Password profiles
-
-Password profiles allow different passwords to expose different media paths.
-
-Example:
-
-```text
-<GrownupPassword123>
-D:\Cartoons
-D:\TV
-D:\Movies
-
-<KidPassword123>
-D:\Cartoons
-D:\TV
--/ViolentShow1
--/RisqueShow2
-```
-
-Entering:
-
-```text
-GrownupPassword123
-```
-
-shows all three configured roots.
-
-Entering:
-
-```text
-KidPassword123
-```
-
-shows only the paths listed in that profile, with the excluded folders hidden.
-
-When any `<password>` profile sections are present:
-
-```text
-master_password=
-```
-
-and:
-
-```text
-use_master_password=
-```
-
-do not control access.
-
-The profile sections become the authentication system.
-
-## Relative exclusions
-
-An exclusion beginning with:
-
-```text
--/
-```
-
-is relative to the most recently listed positive root.
-
-Example:
-
-```text
-<KidPassword>
-D:\TV
--/Restricted Show
-```
-
-means:
-
-```text
-D:\TV\Restricted Show
-```
-
-is excluded.
-
-Another example:
-
-```text
-<KidPassword>
-D:\TV
--/Show A
--/Show B
-D:\Movies
--/Horror
-```
-
-The exclusions apply as follows:
-
-```text
-D:\TV\Show A
-D:\TV\Show B
-D:\Movies\Horror
-```
-
-## Absolute exclusions
-
-Absolute exclusions are also supported.
-
-Example:
-
-```text
-<KidPassword>
-D:\TV
-D:\Movies
--D:\Movies\Horror
-```
-
-Use absolute exclusions when the target is easier to identify explicitly.
-
-## Direct-link protection
-
-Excluded directories are not merely hidden from the browser interface.
-
-LANStream also checks access when resolving requested paths, so a user cannot normally bypass a profile exclusion simply by typing or reusing a direct URL to the excluded subtree.
-
-## Logout
-
-When authentication is enabled, use the LANStream logout function to clear the current authenticated session.
-
----
-
-# Browsing Media
-
-The home page lists all media roots available to the current profile.
-
-Select a root to browse it.
-
-LANStream displays:
-
-- folders
-- recognized video files
-- thumbnails or placeholders
-- navigation controls
-- a text filter
-
-## Folder navigation
-
-Folders are displayed alphabetically.
-
-Use:
-
-```text
-Up one level
-```
-
-to return to the parent folder.
-
-From the top of a configured root, Up one level returns to the LANStream home page.
-
-## Breadcrumb navigation
-
-LANStream displays the current path as breadcrumbs.
-
-You can select a parent breadcrumb to jump directly to that point in the folder hierarchy.
-
-## Directory filter
-
-The filter field searches only the items already loaded on the current page.
-
-It is:
-
-- case-insensitive
-- immediate
-- client-side
-- not a database search
-
-For example, typing:
-
-```text
-alien
-```
-
-shows currently displayed files and folders whose names contain `alien`.
-
-LANStream does not scan other directories in the background to perform this search.
-
-Clearing or revisiting a page resets the filter.
-
----
-
-# Playing Video
-
-Select a video file from a folder to open its detail page.
-
-The detail page may show information such as:
-
-- filename
-- resolution
-- duration
-- file size
-- video codec
-- audio streams
-- subtitle streams
-- generated preview image
-
-Select **Play** to open the dedicated player.
-
-The player begins playback automatically when allowed by the browser.
-
-## Player controls
-
-The player includes controls for:
-
-- Play / Pause
-- 30 seconds back
-- 30 seconds forward
-- timeline seeking
-- current playback position
-- volume
-- fullscreen
-- stream quality mode
-- audio track selection when available
-- supported subtitle selection when available
-
----
-
-# Direct Playback and Transcoding
-
-LANStream automatically decides whether a file can be sent directly to the browser.
-
-## Direct playback
-
-A direct stream means LANStream sends the original media file without re-encoding it.
-
-This gives:
-
-- original video quality
-- minimal server CPU/GPU load
-- no transcoding delay
-
-LANStream uses explicit HTTP byte-range responses so browsers can seek efficiently.
-
-## Current conservative direct-playback rules
-
-LANStream intentionally uses conservative compatibility rules.
-
-Common direct-play candidates include:
-
-### MP4 / M4V / MOV
-
-Video:
-
-```text
-H.264
-```
-
-Audio:
-
-```text
-AAC
-MP3
-```
-
-or no audio.
-
-### WebM
-
-Video:
-
-```text
-VP8
-VP9
-AV1
-```
-
-Audio:
-
-```text
-Opus
-Vorbis
-```
-
-or no audio.
-
-A source containing multiple audio tracks is normally transcoded so LANStream can provide reliable audio-track selection.
-
-Other containers and codecs are normally sent through the transcoder.
-
-## Transcoded playback
-
-When direct playback is not appropriate, LANStream launches FFmpeg and produces a browser-compatible fragmented MP4 stream.
-
-The output uses:
-
-```text
-H.264 video
-AAC audio
-```
-
-The selected transcoder backend depends on the server hardware and configuration.
-
-Transcoding begins from the requested playback position, so seeking does not require encoding the entire file from the beginning.
-
----
-
-# Low Bandwidth Mode
-
-The player provides two explicit stream-quality options:
-
-```text
-Normal
-Low Bandwidth
-```
-
-`Normal` is selected by default.
-
-## Normal mode
-
-Normal mode uses LANStream's usual playback decision:
-
-- direct stream when possible
-- normal transcoding when required
-
-## Low Bandwidth mode
-
-Low Bandwidth mode always forces transcoding, even when the source would otherwise play directly.
-
-This allows LANStream to reduce both resolution and encoded bitrate.
-
-Default settings:
-
-```text
-low_bandwidth_resolution=854x480
-low_bandwidth_bitrate=2M
-```
-
-When you switch to Low Bandwidth mode:
-
-1. LANStream notes the current playback position.
-2. The existing stream is replaced.
-3. A transcoded stream starts at approximately the same timestamp.
-4. The configured resolution and bitrate limits are applied.
-
-Switching back to Normal mode follows the same process.
-
-## Choosing low-bandwidth settings
-
-The defaults are intended as a reasonable general-purpose starting point.
-
-For a moderately constrained Wi-Fi connection:
-
-```text
-low_bandwidth_resolution=854x480
-low_bandwidth_bitrate=2M
-```
-
-For a slower connection:
-
-```text
-low_bandwidth_resolution=640x360
-low_bandwidth_bitrate=1200k
-```
-
-For a very constrained connection:
-
-```text
-low_bandwidth_resolution=640x360
-low_bandwidth_bitrate=800k
-```
-
-The best choice depends on:
-
-- display size
-- Wi-Fi conditions
-- number of simultaneous users
-- source complexity
-- available transcoding performance
-
-## Transfer rate versus media bitrate
-
-The `/transcoder-status` page reports both network transfer rate and Low Bandwidth media target.
-
-These are not the same thing.
-
-A stream encoded at approximately:
-
-```text
-2 Mbps
-```
-
-may temporarily transfer over the network at:
-
-```text
-10 Mbps
-20 Mbps
-30 Mbps
-```
-
-or more.
-
-This is normal.
-
-FFmpeg may encode faster than real time and the browser may download data ahead of the current playback position.
-
-The **Media target** field represents the configured encoded bitrate.
-
-The **Transfer rate** field represents how quickly bytes are currently moving over HTTP.
-
----
-
-# Audio Tracks and Subtitles
-
-## Audio tracks
-
-If the source contains multiple audio tracks, LANStream displays an audio selector.
-
-Examples might include:
-
-```text
-eng · aac
-jpn · aac
-eng · ac3 · Commentary
-```
-
-Changing the audio track restarts the transcoded stream at the current playback position.
+For VAAPI, add this Docker option before the image name:
 
-Files with multiple audio tracks are intentionally transcoded instead of direct-played so the selected stream can be mapped reliably.
-
-## Subtitles
-
-LANStream supports text-based subtitle streams that FFmpeg can convert to WebVTT.
-
-Recognized text subtitle codecs include:
-
-```text
-subrip
-srt
-ass
-ssa
-webvtt
-mov_text
-text
-```
-
-Supported tracks appear in the subtitle selector.
-
-Selecting a subtitle track starts or updates the browser subtitle track.
-
-## Image-based subtitles
-
-Image-based subtitle formats such as PGS are not currently converted for browser display.
-
-If a file contains both supported text subtitles and unsupported image subtitles, only the supported text tracks are offered.
-
----
-
-# Thumbnail and Preview Cache
-
-LANStream generates thumbnails and larger preview images using FFmpeg.
-
-These images are stored in the local cache rather than beside the media files.
-
-LANStream does not write thumbnails into your media directories.
-
-## Lazy generation
-
-LANStream intentionally avoids generating images for an entire library at once.
-
-When a directory is opened:
-
-- the initial visible set is queued first
-- additional thumbnails are requested as items approach the browser viewport
-
-This keeps browsing responsive even when a folder contains many videos.
-
-## Black-frame avoidance
-
-LANStream checks several candidate frames when generating an image.
-
-This reduces the chance of choosing:
-
-- a black opening frame
-- a fade-in
-- a blank title transition
-
-If every candidate appears mostly black, LANStream still creates an image rather than leaving the item permanently without a thumbnail.
-
-## Cache location
-
-### Windows
-
-The cache normally resides beside LANStream:
-
-```text
-LANStream\cache\
-```
-
-### Docker
-
-The cache should be bind-mounted to a persistent host directory.
-
-For example:
-
-```text
-/opt/lanstream/cache/
-```
-
-## Clearing thumbnails
-
-It is safe to delete generated cache files.
-
-LANStream recreates them as needed.
-
-If a thumbnail was generated from an undesirable frame, delete the applicable cache image and revisit the directory to trigger regeneration.
-
-Deleting the entire cache does not delete or alter media files.
-
----
-
-# Transcoder Status Page
-
-LANStream includes a live diagnostics page:
-
-```text
-http://SERVER:PORT/transcoder-status
-```
-
-Example:
-
-```text
-http://192.168.1.50:8060/transcoder-status
-```
-
-This page is useful for confirming hardware acceleration and diagnosing playback.
-
-## Selected backend
-
-The page shows which transcoder LANStream selected.
-
-Examples:
-
-```text
-Intel QSV
-NVIDIA NVENC
-AMD AMF
-VAAPI
-Software libx264
-```
-
-## Backend tests
-
-LANStream tests available encoders by attempting a small real encode.
-
-This is more reliable than simply checking whether an encoder name exists in FFmpeg.
-
-An encoder may be compiled into FFmpeg but still fail because of:
-
-- missing driver support
-- unsupported hardware
-- missing Docker GPU access
-- incompatible runtime libraries
-- permissions
-- unavailable VAAPI device
-
-The status page displays the result of each capability test.
-
-## Active streams
-
-Active streams can show:
-
-- filename
-- client IP
-- playback mode
-- transcoder backend
-- elapsed stream time
-- playback start offset
-- bytes sent
-- current transfer rate
-- Low Bandwidth media target
-
-Direct streams are displayed as:
-
-```text
-Direct
-```
-
-Transcoded streams identify the actual encoder backend.
-
-## Transfer rate
-
-Transfer rate represents HTTP throughput between LANStream and the browser.
-
-It is not the same as source-file bitrate or encoded media bitrate.
-
-Browsers commonly buffer ahead, so this number may be substantially higher than the bitrate required for continuous playback.
-
-## Media target
-
-For Low Bandwidth streams, the media target shows the configured approximate output bitrate.
-
-With:
-
-```text
-low_bandwidth_bitrate=2M
-```
-
-LANStream uses approximately:
-
-```text
-2 Mbps video
-128 kbps audio
-```
-
-for a total target around:
-
-```text
-2.13 Mbps
-```
-
-## Retesting hardware
-
-The status page provides a way to force LANStream to repeat hardware capability tests.
-
-This is useful after:
-
-- updating GPU drivers
-- changing FFmpeg
-- changing Docker GPU configuration
-- changing device permissions
-
----
-
-# Hardware Acceleration
-
-Hardware acceleration is optional.
-
-If no supported hardware encoder works, LANStream can use software x264 encoding.
-
-## Windows selection order
-
-With:
-
-```text
-transcoder=auto
-```
-
-LANStream tests in this order:
-
-1. Intel QSV
-2. NVIDIA NVENC
-3. AMD AMF
-4. Software libx264
-
-The first successful backend is selected.
-
-## Linux selection order
-
-LANStream tests:
-
-1. VAAPI, when the configured device exists
-2. NVIDIA NVENC
-3. Software libx264
-
-## Intel QSV
-
-QSV requires:
-
-- supported Intel graphics hardware
-- a suitable Intel graphics driver
-- FFmpeg built with QSV support
-
-The status page reports whether the actual encoder test succeeds.
-
-## NVIDIA NVENC
-
-NVENC requires:
-
-- supported NVIDIA GPU
-- compatible NVIDIA driver
-- FFmpeg built with NVENC support
-
-For Docker, NVIDIA Container Toolkit is also required.
-
-A machine may support NVENC in one application but not another if the applications ship different encoder runtimes or FFmpeg builds. The LANStream status test confirms whether the exact FFmpeg binary used by LANStream can initialize the encoder.
-
-## AMD AMF
-
-AMF on Windows requires:
-
-- compatible AMD graphics hardware
-- current AMD drivers
-- FFmpeg built with AMF support
-
-## VAAPI
-
-VAAPI is the normal Linux hardware path.
-
-LANStream defaults to:
-
-```text
-/dev/dri/renderD128
-```
-
-The Docker container must be allowed to access `/dev/dri`.
-
-## Software x264
-
-Software transcoding uses:
-
-```text
-libx264
-```
-
-This works without compatible GPU hardware but consumes CPU resources.
-
-High-resolution sources may require a reasonably capable processor for real-time software transcoding.
-
----
-
-# Changing the Listening Port
-
-## Windows
-
-Edit:
-
-```text
-port=8060
-```
-
-in `config.txt`.
-
-Example:
-
-```text
-port=9000
-```
-
-Restart LANStream.
-
-Then connect to:
-
-```text
-http://SERVER-IP:9000
-```
-
-## Docker
-
-Docker normally uses an internal application port and a separately configured host port.
-
-The published deployment preset controls the externally exposed host port.
-
-Changing only the Windows-style `port=` setting may not change the Docker host mapping because Docker environment settings override it.
-
-Use the Docker/LEC host-port setting for the externally accessible port.
-
----
-
-# Updating LANStream
-
-## Windows
-
-The portable Windows release keeps user-editable files beside the executable.
-
-Before updating, preserve:
-
-```text
-config.txt
-cache\
-```
-
-Recommended process:
-
-1. Stop LANStream.
-2. Back up your existing `config.txt`.
-3. Extract the new release to a new folder.
-4. Copy your existing `config.txt` into the new folder.
-5. Optionally copy the old `cache` folder to preserve thumbnails.
-6. Start the new `LANStream.exe`.
-7. Confirm `/transcoder-status` reports the expected backend.
-
-Using a new folder makes rollback easy.
-
-## Docker
-
-The recommended Docker design stores configuration and cache outside the application image.
-
-To update:
-
-1. Stop or redeploy the container.
-2. Pull/build the newer LANStream image/source.
-3. Reuse the existing host `config.txt`.
-4. Reuse the existing cache directory.
-5. Reuse the same media mounts.
-6. Start the new container.
-
-Because the application image is disposable, updating should not require rebuilding your media configuration.
-
----
-
-# Backing Up LANStream
-
-LANStream has no media database.
-
-The only important LANStream-specific user data is normally:
-
-```text
-config.txt
-```
-
-The cache is optional.
-
-## Minimum backup
-
-Back up:
-
-```text
-config.txt
-```
-
-## Optional backup
-
-Also back up:
-
-```text
-cache/
-```
-
-This avoids regenerating thumbnails after reinstalling.
-
-Your actual media remains wherever you already store and back it up.
-
----
-
-# Troubleshooting
-
-## LANStream opens but no media folders appear
-
-Check `config.txt`.
-
-Make sure media paths are listed after the settings:
-
-```text
-D:\Movies
-D:\TV
-```
-
-On Linux/Docker, confirm that the exact paths exist inside the container.
-
-If the path exists only on the host but is not mounted into Docker, LANStream cannot see it.
-
----
-
-## A configured root appears unavailable
-
-Verify that:
-
-- the directory exists
-- the account running LANStream can read it
-- the network share is connected
-- the Docker bind mount is correct
-
-For Windows network storage, prefer UNC paths such as:
-
-```text
-\\NAS\Media\Movies
-```
-
-when mapped-drive visibility is unreliable.
-
----
-
-## Browser cannot connect to Windows LANStream
-
-Check:
-
-1. `LANStream.exe` is still running.
-2. The console shows the expected port.
-3. You are using the correct server IP address.
-4. Windows Firewall allows LANStream on Private networks.
-5. The client is on the same reachable network.
-
-Test locally on the server first:
-
-```text
-http://localhost:8060
-```
-
-If localhost works but another device cannot connect, the issue is usually firewall or network routing.
-
----
-
-## Video plays directly but does not seek well
-
-LANStream implements HTTP byte-range streaming for direct playback.
-
-If seeking is still problematic:
-
-- try a different browser
-- confirm the file is not on an extremely slow or unreliable storage device
-- check that a reverse proxy is not interfering with Range requests
-
----
-
-## Video will not play
-
-Open:
-
-```text
-/transcoder-status
-```
-
-Check whether LANStream has a usable transcoder.
-
-If no backend is available, direct-compatible files may still work, but files requiring transcoding will fail.
-
----
-
-## Hardware transcoder is unavailable
-
-Read the detailed error on `/transcoder-status`.
-
-Common causes include:
-
-- outdated GPU driver
-- FFmpeg build lacking the required encoder
-- unsupported GPU
-- Docker GPU not exposed
-- missing NVIDIA Container Toolkit
-- `/dev/dri` not available
-- Linux device permissions
-
-Use the status-page retest after correcting the problem.
-
----
-
-## NVIDIA NVENC reports an API version mismatch
-
-An error similar to:
-
-```text
-Required NVENC API: X
-Found: Y
-```
-
-means the FFmpeg build expects a newer NVIDIA driver interface than the installed driver provides.
-
-Update the NVIDIA driver and reboot.
-
-Then force a transcoder retest.
-
----
-
-## Intel QSV reports MFX errors
-
-Errors mentioning:
-
 ```text
-MFX
+--device /dev/dri:/dev/dri
 ```
 
-or:
+The default device is /dev/dri/renderD128. Override it with
+LANSTREAM_VAAPI_DEVICE if another node is needed.
+If running as a custom user, also verify device permissions and group membership.
+Making the device visible does not by itself make it usable.
 
-```text
-current mfx implementation is not supported
-```
+For NVENC, the Docker host needs NVIDIA container support and the container must
+receive the GPU, for example through --gpus all in an already-configured environment.
+FFmpeg and the installed driver must agree on the encoder API.
 
-usually mean the installed Intel hardware/driver combination cannot initialize the QSV encoder through that FFmpeg build.
+For an NZBDAV-only installation, omit the local media mount and configure WebDAV.
+No rclone mount is needed.
 
-LANStream will normally continue testing NVENC, AMF, or software encoding.
+### Ports
 
----
+The port setting in config.txt controls launcher/Flask startup, not Gunicorn.
+Changing port= does not change Docker's published port.
+Modify the host mapping or Gunicorn bind as appropriate.
 
-## Linux VAAPI is unavailable
+## Running from source
 
-Check whether the render device exists:
+Install system FFmpeg/FFprobe and, for CBR, 7-Zip.
+On Linux, from the source directory:
 
 ```bash
-ls -l /dev/dri
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements-linux.txt
 ```
 
-A common device is:
+Prepare config.txt with real server paths. Start the Waitress launcher:
+
+```bash
+python launcher.py
+```
+
+The console prints the addresses and selected backend.
+The default port is 8060, and the server listens on all interfaces.
+
+python app.py starts Flask's development server instead.
+For a continuing service, use the launcher or included Gunicorn configuration.
+Starting Gunicorn with its supplied configuration uses port 8080 independently
+of port= in config.txt.
+
+Tools are found beside the application first, then on PATH.
+Set environment variables before starting the process.
+On Windows source installations, use requirements.txt.
+
+## Windows installation
+
+Extract the entire distribution. Keep LANStream.exe, _internal, ffmpeg.exe,
+ffprobe.exe and any supplied 7-Zip files in their expected positions.
+LANStream.exe is not a standalone single-file application.
+
+Start the executable and leave the console open.
+Open the displayed address and allow the appropriate local-network firewall access
+when required.
+
+Configure paths belonging to the Windows server, such as D:\Movies or
+\\NAS\Media\TV. UNC shares must be readable by the process account.
+A service running as another account may not see your desktop's mapped drives.
+
+Editable config.txt lives beside the executable. Bundled templates/scripts remain
+inside the application's resources.
+For build instructions see [README-WINDOWS.txt](README-WINDOWS.txt).
+
+## Settings and first use
+
+Settings controls the launcher/Flask port, preferred backend, default player
+quality, access mode, roots and profile passwords/exclusions.
+
+Paths must be absolute server paths; Docker paths refer to the container.
+Do not put URLs or configuration directives into folder fields.
+
+Blank password fields preserve existing passwords.
+The first profile administers the server. Removing profiles or switching access
+modes replaces the corresponding library layout; inspect the intended result.
+
+Saving uses a concurrent-change check and atomic file replacement.
+If another editor changed the file after you opened Settings, reload the page.
+Comments, unknown options and existing NZBDAV fields are preserved, although the
+file's formatting/layout may change.
+
+Port changes need a restart. Docker mappings must be changed separately.
+Environment overrides continue to win over matching file values.
+Manual edits to shared authentication/backend settings also require a restart
+to update values initialized at startup.
+See [when changes apply](docs/configuration.md#when-changes-take-effect).
+
+## Access modes and profiles
+
+### Passwordless access
+
+With no profile sections and use_master_password=false, anyone reaching the server
+can access libraries, Settings and configured NZBDAV.
+
+### Shared password
+
+With use_master_password=true and a nonempty master_password, all users enter the
+same password and share libraries and administrative rights.
+A stored password alone does not activate authentication.
+
+### Password profiles
+
+Each section begins with its password in angle brackets. There are no usernames.
 
 ```text
-/dev/dri/renderD128
+<CHANGE_THIS_ADMIN_PASSWORD>
+/media/Movies
+/media/TV
+
+<CHANGE_THIS_GUEST_PASSWORD>
+/media/Movies
+-/Private
 ```
 
-For Docker, make sure `/dev/dri` is exposed to the container.
+The first profile administers Settings and NZBDAV.
+The guest sees Movies without the Private subtree.
+Content routes enforce exclusions even when opened through a direct URL.
 
----
+Relative exclusions apply to the last positive root, with absolute-path handling
+described in the [configuration reference](docs/configuration.md#profiles-and-exclusions).
+Use distinct nonempty passwords without angle brackets, control characters or
+surrounding whitespace.
 
-## Low Bandwidth picture is lower quality but status still shows high Mbps
+Passwords are stored in plain text in the configuration.
+Browser sessions use signed cookies. With the default random session secret,
+restarting the process normally requires logging in again.
+Logout clears that browser's session.
 
-Check which status column you are reading.
+Profiles restrict media access, but Activity is a server-wide view that can expose
+stream names, paths and clients to authenticated users.
+Profiles are not complete isolation between mutually untrusted users.
 
-**Transfer rate** can be high because FFmpeg and the browser are buffering ahead.
+## Browsing libraries
 
-**Media target** is the relevant Low Bandwidth encoding target.
+The home page lists the current profile's roots and, for administrators, configured
+NZBDAV. Open a root, navigate folders and use breadcrumbs to move upward.
 
-A 2 Mbps media stream may still transfer in short 20 Mbps bursts.
+Names use natural sorting: item 2 appears before item 10.
+The page filter searches the directory already displayed.
+It is not a recursive collection search or a database query.
 
----
+| Type | Recognized extensions |
+| --- | --- |
+| Video/pointers | .mp4, .m4v, .mov, .mkv, .webm, .avi, .mpg, .mpeg, .m2ts, .mts, .ts, .wmv, .flv, .ogv, .strm |
+| Images | .jpg, .jpeg, .png, .webp, .gif, .bmp, .tif, .tiff, .avif |
+| Documents | .pdf |
+| Comics | .cbz, .cbr |
+| Text | .txt, .md, .markdown |
 
-## Low Bandwidth mode still buffers
+An extension selects a viewer; it does not guarantee valid or decodable contents.
+Symbolic links are resolved during access checks. A link cannot grant access
+outside the requested root or bypass an excluded subtree.
 
-Try reducing the configuration.
+## Video playback
 
-Example:
+Opening a video displays technical information and an initial quality choice.
+Start playback to open the player. Overlay controls hide after inactivity and
+reappear on interaction.
+
+Controls include play/pause, 30-second backward/forward jumps, seek, volume,
+fullscreen, settings and technical information.
+
+| Control | Action |
+| --- | --- |
+| Space | Play/pause outside input fields or buttons handling the key. |
+| F | Toggle fullscreen when permitted by the browser. |
+| I | Toggle Playback info. |
+| Escape | Close open panels; the browser may also exit fullscreen. |
+| Gear | Open quality, codec and track controls. |
+
+### Direct playback
+
+Auto uses conservative compatibility rules:
+
+| Source | Video | Audio |
+| --- | --- | --- |
+| MP4, M4V, MOV | H.264 | AAC, MP3 or no audio |
+| WebM | VP8, VP9, AV1 | Opus, Vorbis or no audio |
+| Recognized remote HLS | H.264 | AAC, MP3 or no audio; native browser HLS required |
+
+MKV normally triggers conversion even if a particular browser can play some MKV
+variants. These rules do not exhaustively identify every client capability.
+If an Auto direct attempt fails, the player tries transcoding.
+
+Local delivery supports HTTP byte ranges for seeking.
+Compatible remote MP4/WebM STRM targets are relayed through the server.
+They do not automatically enter the NZBDAV block cache.
+
+### Transcoded playback and seeking
+
+FFmpeg selects the first video stream and requested audio track, applies output
+settings and writes fragmented MP4 directly into the HTTP response.
+
+There is no separate audio-only conversion path that always copies video:
+requesting conversion can re-encode video as well.
+
+If a seek destination is already buffered in the browser, the player reuses it.
+A seek outside that buffer can start a new FFmpeg request at the new position.
+Rapid unbuffered seeks are coalesced for about 200 ms.
+Actual latency still depends on reading and decoding the source.
+
+Unknown-duration/live sources have seeking disabled.
+Positions are not stored as persistent watch history.
+
+## Quality and codecs
+
+| Mode | Effect |
+| --- | --- |
+| Auto | Original where compatible, otherwise H.264/AAC unless explicit codecs are selected. |
+| Original · no transcoding | Original bytes, with no conversion fallback. |
+| Source resolution · transcode | Convert at original resolution without an explicit video bitrate ceiling. |
+| 360p–4K preset | Convert within the preset's dimensions/bitrate. |
+| Custom | Apply the selected limits after Apply quality. |
+
+Original disables controls requiring audio/codec conversion.
+It does not make an incompatible file playable.
+
+| Preset | Maximum dimensions | Video target | Audio target |
+| --- | --- | --- | --- |
+| 4K | 3840 × 2160 | 20,000 Kbps | 192 Kbps |
+| 1440p | 2560 × 1440 | 12,000 Kbps | 192 Kbps |
+| 1080p | 1920 × 1080 | 8,000 Kbps | 192 Kbps |
+| 720p | 1280 × 720 | 4,000 Kbps | 128 Kbps |
+| 480p | 854 × 480 | 1,500 Kbps | 96 Kbps |
+| 360p | 640 × 360 | 700 Kbps | 96 Kbps |
+
+Limited scaling preserves display aspect ratio, uses even dimensions and avoids
+upscaling. A widescreen movie is not stretched to fill a 16:9 rectangle.
+
+Custom accepts maximum heights 240, 360, 480, 720, 1080, 1440 or 2160,
+video 300–40,000 Kbps, and audio 96, 128, 160, 192 or 256 Kbps.
+Targets are encoder settings, not exact total network limits:
+audio, muxing and delivery bursts also contribute.
+
+Auto transcoding uses 160 Kbps audio; source-resolution conversion uses 192 Kbps.
+Original preserves the source bitrate. Save a default in Settings/default_quality.
+
+The video menu offers H.264, HEVC/H.265 and AV1; audio offers AAC, Opus and MP3.
+Opening settings checks server encoders and the browser's declared MP4 support.
+Unavailable options are disabled.
+
+An explicit codec forces conversion. Switching quality, codec or audio preserves
+position and paused state but may open a new transcoding response.
+
+Unavailable VAAPI output codecs do not fall back to CPU.
+Other backends may offer software HEVC/AV1 when their hardware test fails.
+Playback info reports the selected encoder. Software HEVC/AV1 can be demanding.
+
+Historical low_bandwidth_resolution/low_bandwidth_bitrate settings no longer
+control quality. The old low=1 URL query maps to 480p.
+
+## Hardware acceleration
+
+Auto selection tests QSV, NVENC, AMF and software on Windows.
+On Linux it tests VAAPI when the device exists, then NVENC and software.
+Startup results are cached; HEVC/AV1 are tested separately when needed.
+
+Use a backend appropriate to the platform and verify the result in Activity.
+After driver/tool changes, press Retest transcoder backends.
+See [selection caveats](docs/configuration.md#transcoder-selection) for explicit
+preferences missing from a platform's test list.
+
+The VAAPI video path is:
 
 ```text
-low_bandwidth_resolution=640x360
-low_bandwidth_bitrate=1200k
+compressed packets → VAAPI decoder → GPU frames
+                   → HDR10 tone mapping when needed
+                   → scale_vaapi → VAAPI encoder → fragmented MP4
 ```
 
-Restart LANStream after changing server-level settings.
+Decoder, filters and encoder share a device.
+Main 10/P010 to NV12 conversion and resizing run on the GPU.
+The playback path does not use CPU scale/format or hwupload/hwdownload.
+Metadata-only filters can adjust/remove frame tags without downloading surfaces.
 
-Also verify that the server can transcode the source faster than real time.
+Audio, demuxing, muxing, networking and application work still use CPU.
+Short synthetic encoder tests intentionally upload CPU-generated frames.
+The HDR capability test instead decodes a tiny bundled compressed HDR10 frame.
 
----
+A vainfo VLD entry indicates decoding support; EncSlice indicates encoding.
+Neither proves every processing operation.
+Check the same device, permissions and FFmpeg environment used by the server.
 
-## Thumbnails are missing
+QSV/NVENC/AMF currently keep decoding and filters in software and accelerate
+encoding. Their tone mapping also uses CPU.
 
-Thumbnail generation requires working FFmpeg access.
+## HDR and tone mapping
 
-Check:
+Transcoding recognized HDR produces **SDR BT.709** automatically.
+This applies to H.264, HEVC and AV1 outputs: there is no HDR-preserving transcode mode.
+SDR input, including 10-bit SDR, is not identified as HDR just from bit depth.
+
+PQ/smpte2084 identifies HDR10-style input.
+HLG/arib-std-b67 is handled by the software processing path.
+VAAPI uses tonemap_vaapi for PQ and rejects HLG rather than silently using CPU.
+
+The GPU path tone-maps before converting/scaling to NV12 for encoding.
+The CPU path linearizes to floating-point RGB with zscale, converts the gamut,
+applies Hable and converts to limited-range BT.709.
+Output color tags are set explicitly and stale HDR/Dolby frame side data is removed.
+
+Before the first HDR request on a backend, a cached capability check uses a tiny
+compressed HDR10 frame with mastering/content-light information, held in RAM.
+It validates required filters and performs an actual short encode.
+Missing filters or failed driver processing cause an explanatory HTTP 503.
+Activity's retest clears this cache.
+
+This synthetic check does not certify every input resolution or metadata variant.
+VAAPI tonemap_vaapi requires mastering-display information in the decoded HDR10
+frames; unsuitable sources can still fail at runtime.
+The GPU's HEVC Main 10 decoder alone is not enough.
+
+Dolby Vision Profile 7 and compatible Profile 8 sources can use an ordinary
+HDR10 base layer. HLG-compatible Profile 8 can use the CPU HLG path.
+Dynamic Dolby Vision metadata/enhancement layers are not reconstructed.
+Unsupported proprietary profiles, including Profile 5, are rejected for conversion.
+Do not infer support from a filename containing HDR or DV.
+
+Original/direct delivery retains source bytes and leaves HDR to the client.
+A compatible HDR client may therefore be preferable when retaining the source's
+HDR rendition matters. Playback info distinguishes original delivery from the
+active SDR mapping path.
+
+## Audio and subtitles
+
+### Audio
+
+Embedded tracks are listed with language, codec and title when available.
+Choosing another track normally triggers conversion.
+Converted audio is stereo at 48 kHz; Atmos, multichannel layout or the original
+compressed bitstream is not automatically retained.
+
+Original delivery preserves source audio bytes, subject to client support.
+
+### Text subtitles
+
+Supported embedded text codecs include SubRip/SRT, ASS, SSA, WebVTT, MOV_TEXT
+and text. The browser receives WebVTT and overlays captions.
+Subtitles are not burned into transcoded video.
+
+There is no OCR for PGS/VobSub and no external SRT upload control.
+WebVTT conversion does not preserve all ASS styling/animation.
+MOV_TEXT keeps text without optional sample styling extensions.
+
+The browser loads overlapping 20-second windows and prefetches the next one.
+Seeking/changing tracks cancels obsolete browser requests and ignores stale results.
+Old cues are removed; known end times of long cues are retained.
+
+The reader uses timestamps from other streams to bound silent subtitle gaps.
+Common MKV/MOV_TEXT packets are read by byte offset; unusual layouts use a bounded
+packet-reader fallback. A small subtitle-only container is built in RAM and sent
+to FFmpeg, instead of reopening the whole movie for conversion.
+
+A request has a 30-second deadline. HTTP 504 causes a notice and a delayed retry;
+video continues independently. Subtitle selection does not restart video.
+
+## Integrated NZBDAV
+
+### Connect directly
+
+Set these values in the active configuration:
+
+```ini
+nzbdav_url=http://nzbdav.example:3000/
+nzbdav_user=WEBDAV_USER
+nzbdav_password=WEBDAV_PASSWORD
+nzbdav_root=content
+nzbdav_ram_cache_mb=256
+```
+
+Use the final WebDAV endpoint, not a web UI or rclone RC port.
+Do not embed credentials in the URL.
+Root is relative to the endpoint; empty exposes its root.
+The example content directory must match the actual server layout.
+
+An empty URL disables integration.
+Only the administrator sees/accesses this library, including in profile mode.
+The integration lists folders and videos, not remote STRM pointers or the other viewers.
+
+The backend must support PROPFIND, HEAD, Content-Length and byte ranges.
+The client does not follow redirects or use environment proxies.
+Use a directly reachable final endpoint.
+
+NZBDAV fields are currently edited in config.txt, not a dedicated Settings form.
+Settings preserves them when saving other options.
+Changes recreate the remote service/cache at the next NZBDAV access and interrupt
+streams using the old service.
+
+### Bounded block cache
+
+The cache stores 4 MiB blocks shared by original delivery, FFprobe, transcoding
+and subtitle extraction. Least recently used blocks can be evicted even while
+their file is open.
+
+A 60 GiB movie can play through a 256 MiB cache.
+As playback progresses, new blocks replace old ones.
+Seeking far backward downloads evicted blocks again.
+
+This is not an in-memory recording of the whole movie.
+It does not guarantee every seek is a cache hit.
+The budget includes stored blocks and reservations for pending reads.
+
+Python, FFmpeg, metadata, sockets and small delivery copies use additional memory.
+The limit is per worker: four 256 MiB workers can reserve approximately 1 GiB
+for blocks alone. The included deployment uses one worker.
+
+Accepted budgets are 8–16384 MiB, rounded down to whole blocks.
+A slow/paused browser holds at most a small delivery copy rather than pinning
+a complete block during a network write.
+
+### HTTP and internal gateway
+
+The client reuses HTTP/TLS connections and cookies.
+Concurrent readers of the same block share its fetch.
+A backend ignoring Range is rejected instead of causing an unbounded full download.
+
+FFmpeg/FFprobe read through an internal loopback HTTP gateway on an ephemeral port,
+protected by random tokens. Do not publish that port.
+Tokens are not WebDAV passwords. Browser URLs continue through LANStream's
+normal access-controlled routes.
+
+Initial probing and cache misses still depend on upstream latency/throughput.
+The cache cannot make an insufficiently fast source deliver data faster.
+
+### Keeping an existing rclone mount
+
+Local libraries can still point to FUSE mounts.
+LANStream does not start or stop rclone automatically.
+tools/mount_nzbdav.sh is a separate optional helper.
+
+It keeps VFS disk cache off and uses per-file RAM buffering.
+Those buffers are not the direct integration's shared block cache.
+See [optional rclone](docs/configuration.md#optional-rclone-mount).
+
+## STRM files
+
+A .strm file contains exactly one HTTP/HTTPS URL or local video path:
 
 ```text
-/transcoder-status
+https://media.example/video.mp4
 ```
 
-and server logs.
-
-If FFmpeg itself is unavailable, video probing and image generation may also fail.
-
----
-
-## Thumbnail shows a poor frame
-
-Delete the applicable cached thumbnail or clear the cache.
-
-LANStream will regenerate the image.
-
----
-
-## Old password still appears to be required
-
-If changing authentication mode:
-
-1. Confirm `config.txt` contains the intended settings.
-2. Restart LANStream or the container when changing server-level configuration.
-3. Clear the browser session by logging out or removing the LANStream site cookie if necessary.
-
-Password profiles take precedence whenever `<password>` sections exist.
-
----
-
-## Password profiles show the wrong directories
-
-Check the order of entries carefully.
-
-A relative exclusion:
-
-```text
--/Folder
-```
-
-belongs to the most recently listed positive root.
-
-Example:
-
-```text
-D:\TV
--/Restricted
-D:\Movies
--/Horror
-```
-
-means:
-
-```text
-D:\TV\Restricted
-D:\Movies\Horror
-```
-
-are excluded.
-
----
-
-## Docker config changes do not appear
-
-Confirm you are editing the host file that is actually mounted as:
-
-```text
-/config.txt
-```
-
-into the container.
-
-Media-root and profile changes are read when pages are loaded, but environment-overridden settings may require restarting the container.
-
----
-
-## CPU usage is unexpectedly high
-
-Visit:
-
-```text
-/transcoder-status
-```
-
-If the selected backend is:
-
-```text
-Software libx264
-```
-
-then LANStream is using CPU transcoding.
-
-Investigate why the expected hardware encoder failed its capability test.
-
----
-
-## Network usage is unexpectedly high
-
-Direct streams send the original source bitrate.
-
-A high-bitrate Blu-ray rip or camera file may require tens of Mbps.
-
-Use Low Bandwidth mode to force a constrained stream.
-
----
-
-# Security Notes
-
-LANStream is primarily designed for trusted local networks.
-
-## Passwords
-
-LANStream's password system is useful for basic household or LAN access control.
-
-It should not be treated as a replacement for a hardened internet-facing identity system.
-
-## Internet exposure
-
-Do not expose LANStream directly to the public internet without appropriate protection.
-
-If remote access is required, use a properly configured solution such as:
-
-- VPN
-- authenticated reverse proxy
-- TLS termination
-- firewall restrictions
-
-## Media permissions
-
-Where practical, grant LANStream read-only access to media.
-
-The recommended Docker deployment mounts media with:
-
-```text
-:ro
-```
-
-This protects the collection even if the application encounters a problem.
-
-## Reverse proxies
-
-A reverse proxy should preserve:
-
-- streaming responses
-- HTTP Range headers
-- long-running connections
-
-If direct-stream seeking breaks only through the reverse proxy, verify the proxy's Range-request behavior.
-
----
-
-# Supported Video File Extensions
-
-LANStream recognizes files with these extensions as video:
-
-```text
-.mp4
-.m4v
-.mov
-.mkv
-.webm
-.avi
-.mpg
-.mpeg
-.m2ts
-.mts
-.ts
-.wmv
-.flv
-.ogv
-```
-
-Recognition does not guarantee direct browser playback.
-
-Unsupported browser formats are normally transcoded through FFmpeg.
-
-Actual codec support therefore also depends on the FFmpeg build supplied with or installed for LANStream.
-
----
-
-# Licensing
-
-LANStream itself is released into the public domain under **The Unlicense**.
-
-See:
-
-```text
-LICENSE
-```
-
-The Windows distribution may include separately licensed third-party software, including:
-
-```text
-ffmpeg.exe
-ffprobe.exe
-```
-
-Those programs are not covered by The Unlicense.
-
-See:
-
-```text
-THIRD_PARTY_LICENSES.md
-```
-
-for the exact third-party licensing information included with the release.
-
----
-
-# Quick Reference
-
-## Default Windows configuration
-
-```text
-port=8060
-use_master_password=false
-master_password=
-transcoder=auto
-low_bandwidth_resolution=854x480
-low_bandwidth_bitrate=2M
-
-D:\Movies
-D:\TV
-```
-
-## Default Linux configuration
-
-```text
-port=8060
-use_master_password=false
-master_password=
-transcoder=auto
-low_bandwidth_resolution=854x480
-low_bandwidth_bitrate=2M
-
-/mnt/media/Movies
-/mnt/media/TV
-```
-
-## Status page
-
-```text
-http://SERVER-IP:8060/transcoder-status
-```
-
-## Transcoder values
-
-```text
-auto
-vaapi
-qsv
-nvenc
-amf
-software
-```
-
-## Default Low Bandwidth settings
-
-```text
-854x480
-2 Mbps video
-128 kbps audio
-```
-
-## Windows automatic transcoder preference
-
-```text
-Intel QSV
-NVIDIA NVENC
-AMD AMF
-Software libx264
-```
-
-## Linux automatic transcoder preference
-
-```text
-VAAPI
-NVIDIA NVENC
-Software libx264
-```
-
----
-
-# Version
-
-**LANStream 1.0.0**
-
-
-## Editing settings in the browser
-
-Open **Settings** from the top bar or visit `/settings`. The form edits `config.txt`
-for you: port, transcoder, access mode, master password, media roots, password profiles
-and exclusions. Use absolute paths on the server, one per line. Paths may be saved
-while a drive is offline. For a profile exclusion, put `-/Private` after its root.
-
-The first password profile is the administrator. Other profiles cannot access the
-settings page. With a master password, sign in before editing settings; without
-passwords, everyone who can reach LANStream can edit them. Leave existing password
-fields blank to keep their passwords. Removing a profile or switching access mode
-replaces that media configuration. The first remaining profile becomes administrator.
-
-After saving, media access and transcoder settings apply immediately. Existing sessions
-whose password was changed are asked to sign in again. Restart the server after
-changing its port. Environment variables take precedence over the saved file; the
-page lists active overrides. Docker bindings remain deployment settings.
-
-For writable Docker configuration, mount the containing directory instead of binding
-only `config.txt`, then set `LANSTREAM_CONFIG_FILE` to its path inside that directory.
-The UI saves by replacing the file atomically and reports an error if the mount or
-permissions prevent this. Comments and unrecognized settings are preserved. If another
-editor changes the file while the form is open, reload the page before saving again.
-
-
-## Playback quality profiles
-
-The player now replaces Normal / Low Bandwidth with Auto, Original · no transcoding,
-Source resolution · transcode,
-360p (700 Kbps), 480p (1.5 Mbps), 720p (4 Mbps), 1080p (8 Mbps), 1440p (12 Mbps),
-and 4K (20 Mbps). The bitrate in each label is the video target; audio and container
-overhead are additional. This replaces the older low-bandwidth configuration
-instructions above. The legacy `low=1` playback URL maps to the 480p profile.
-
-Choose Custom to adjust maximum resolution, video bitrate (300–40000 Kbps) and audio
-bitrate (96, 128, 160, 192 or 256 Kbps), then press Apply quality. Switching quality
-keeps your position and paused state. The player identifies whether the active stream
-is direct or transcoded, and shows its resolution limit and bitrate target. Presets
-also work for videos without audio. Selecting another audio track requires transcoding.
-
-Resolution limits describe a landscape bounding box, preserve display aspect ratio,
-and never enlarge smaller sources. Auto tries direct playback first and falls back
-to transcoding. Original delivers the unmodified media and never falls back to
-transcoding; if the browser cannot play it, choose Auto to allow conversion.
-Source resolution · transcode explicitly re-encodes at the original resolution
-with variable bitrate, which can be lower than the source bitrate.
-Limited profiles use encoder rate control; they are not a strict
-network traffic cap. Higher presets require sufficient encoder capacity.
-
-Set `default_quality=auto` in config.txt or use Settings → Playback quality to choose
-the default for new sessions. Use source to disable transcoding.
-Valid defaults: auto, source, transcode, 360p, 480p, 720p, 1080p,
-1440p and 2160p. A selection made on the video details page overrides this default for
-that playback. The Activity page includes each transcoded stream's quality.
-
-
-## Compact playback controls and live technical information
-
-Video now fills the playback window, with a small control bar overlaid at the bottom.
-Controls fade out after inactivity while playing, both in a normal window and in
-fullscreen. They remain visible while paused, using the keyboard or opening a panel.
-Open the gear menu for quality, custom bitrate, audio tracks and subtitles. The menu
-scrolls on small screens and can be closed with Escape.
-
-The ⓘ button (or I key) opens Playback info without interrupting the video. It shows:
-
-- Direct play or transcoding, its reason, and the selected encoder.
-- Output video/audio codecs, decoded resolution and encoder bitrate targets.
-- Selected subtitle track, playback state, buffer ahead and dropped/total frames.
-- Displayed frames per second, measured over real elapsed time while playing.
-- HTTP request transfer rate and bytes delivered, separate from media bitrate.
-- Source container, codecs, resolution, nominal FPS, pixel format, color transfer,
-  audio channels/sample rate and file bitrate.
-
-Values refresh every second only while the panel is open and the page is visible.
-Unavailable metrics display an em dash. Transcoded codecs follow the selected video/audio
-encoder configuration; output resolution comes from browser metadata. Source values
-come from ffprobe. No repeated ffprobe/encoder tests are run by the diagnostics panel.
-HTTP transfer can finish ahead of playback because the browser buffers the video;
-completed request information is retained for up to ten minutes (bounded in memory).
-It is isolated by browser session, video path and a per-request random token.
-
-Video preview generation, video thumbnail requests and folder preview scans have been
-removed; older instructions about generating video previews no longer apply. Video
-cards use a compact play icon and the detail page shows metadata directly. Image,
-PDF and comic thumbnails are still available. Existing cached files are left in place.
-
-
-## Choosing transcoding codecs
-
-Open the playback gear menu to select Video codec (H.264 / AVC, H.265 / HEVC, AV1)
-and Audio codec (AAC, Opus, MP3). Auto retains direct playback where possible; when
-transcoding it uses H.264 and AAC. An explicit choice forces conversion of the stream.
-Changing codecs keeps the playback position and paused state. These choices are local
-to the current player; they do not change the source file or server configuration.
-
-The menu probes available FFmpeg encoders, checks browser MP4 codec support, and
-disables unavailable choices. An unsupported combination is rejected before changing
-the active stream. If detection fails, use Retry codec detection. Encoder results are
-cached; Activity → Retest transcoder backends clears the codec probe cache as well.
-
-For HEVC or AV1, LANStream first tests the selected GPU backend. If it cannot encode
-that codec, it tests software (libx265 or libsvtav1). If neither works, the codec is
-unavailable. Codec probes use small synthetic inputs and fragmented MP4 muxing. Browser
-compatibility checks are advisory and do not measure real-time decoding performance.
-The menu identifies software encoding; Playback info reports actual output codecs,
-encoder and any software fallback. Audio encoders are AAC, libopus and libmp3lame and
-output stereo at 48 kHz. Existing quality profiles still determine audio bitrate.
-
-Streams remain fragmented MP4, using the hvc1 tag for HEVC. Limited software AV1 uses
-capped CRF with the quality profile's bitrate ceiling; other limited codecs retain
-bitrate target/rate control. HEVC/AV1 software encoding needs more CPU than H.264.
-Selecting codecs does not add tone mapping or change the existing SDR/HDR handling.
+UTF-8, BOM, blank lines, # comment lines and Windows line endings are accepted.
+Multiple targets, control characters and content over 65,536 characters are rejected.
+
+A local target can be absolute or relative to the STRM file's directory.
+It must resolve beneath an authorized root and respect exclusions.
+Nested STRM pointers, FFmpeg protocols, plugin URLs and custom HTTP-header suffixes
+such as |User-Agent=... are unsupported.
+
+Compatible remote MP4/WebM is relayed with Range support.
+Native HLS may redirect the browser to the upstream URL.
+Transcoding reads the remote target through FFmpeg.
+Expired URLs must be updated in the pointer file.
+
+Only use trusted pointers: the server makes requests to their target addresses.
+
+## Images, documents, comics and text
+
+Images support previous/next navigation within the folder, arrow keys and horizontal
+swipes. Fullscreen navigation can keep the view open; the mouse wheel switches
+images in that mode.
+
+TIFF is converted to a cached JPEG for compatibility.
+Other image formats are normally sent to the browser; decoding support varies.
+
+PDF/comics are rendered as page images.
+Use buttons, arrows, PageUp/PageDown or horizontal swipes.
+The viewer also prepares the next page.
+It is not a PDF editor with selectable text, search or annotation editing.
+
+CBZ is a ZIP archive of supported images; CBR is read using 7-Zip.
+Pages use natural ordering. AVIF is excluded from comic page images by this reader.
+
+TXT/MD/Markdown is read as UTF-8 with invalid characters replaced and shown as
+escaped plain text. HTML and Markdown are not executed/rendered.
+The whole text file is read, so avoid extremely large text documents.
+
+## Caches and storage
+
+| Data | Location | Lifetime |
+| --- | --- | --- |
+| NZBDAV blocks | Worker RAM | Until eviction, reconfiguration or restart. |
+| FFprobe metadata | Worker RAM | Up to 128 entries, five-minute TTL, file-version invalidation. |
+| Stream statistics | Worker RAM | Active requests and limited recent history. |
+| Subtitle windows | Server/browser RAM | Bounded windows; no temporary movie files. |
+| Image/PDF/comic thumbnails | Graphics cache | Persistent until removed. |
+| Rendered document pages/TIFF | Graphics cache | Persistent until removed. |
+| Configuration | Active config.txt | Persistent. |
+
+The graphics cache defaults to cache beside the application, unless
+LANSTREAM_CACHE_DIR overrides it. It has no automatic global size limit/expiration.
+nzbdav_ram_cache_mb does not control it.
+
+No video posters/thumbnails or folder preview scans are generated.
+Old derivatives are not deleted automatically.
+Graphics cache keys use paths; replacing a source under the same name may leave
+a stale derivative. Stop the server, remove only the affected cached derivative
+and reopen the source to regenerate it. Do not delete original media.
+
+## Playback diagnostics
+
+Playback info (I) describes the current player request.
+Activity at /transcoder-status describes the server.
+
+The player shows method/reason, output codecs, displayed dimensions, bitrate
+targets, actual encoder, tone-mapping path and subtitles.
+It also shows buffer ahead, displayed FPS, dropped frames, transfer rate,
+request bytes and original source properties.
+
+Metrics refresh about once per second while the panel is visible.
+A dash means a value is unavailable, not necessarily an error.
+FPS is displayed frames over wall time, not FFmpeg's maximum encode speed.
+Transfer rate measures HTTP delivery, including buffer filling, not source bitrate
+or NZBDAV upstream speed.
+
+Activity shows active requests, clients, transferred bytes, starting positions,
+elapsed request time and backend tests. Administrators also see NZBDAV cache counters.
+A response can finish while the browser keeps playing buffered data.
+An empty active list does not necessarily mean no video is playing.
+
+Low GPU usage alone does not prove software encoding.
+Inspect the command, video engines, buffer and dropped frames together.
+See [troubleshooting](docs/troubleshooting.md).
+
+## Updates, shutdown and backups
+
+Stop the launcher with Ctrl+C or Docker with docker stop lanstream.
+Managed FFmpeg/FFprobe children and remote connections are closed.
+The included Gunicorn setup has a five-second graceful shutdown period.
+Retain its cleanup hooks if changing the service command/configuration.
+
+For Docker updates, rebuild the image from updated source and recreate the container
+with the same mounts, ports, environment and GPU access.
+Restarting an old image does not incorporate new code.
+
+For source updates, stop the process, update source/dependencies and restart.
+On Windows, replace the complete distribution while retaining your configuration.
+Reload open players after script/template changes.
+Deploy Python, templates and static files together; the image must include
+tone_mapping.py as well as the media/subtitle modules.
+
+Back up the active config.txt and deployment details: mounts, ports, environment
+and devices. Graphics cache backup is optional because it can be regenerated.
+RAM caches need no backup. There is no media database to export.
+Protect backups containing passwords/WebDAV credentials.
+Original media needs an independent backup policy.
+
+## Operational limits
+
+LANStream targets trusted local networks. It has no built-in TLS, multifactor login,
+per-user resource quotas or complete user isolation.
+Activity can reveal file names, paths and clients; passwords are plain-text settings.
+
+A RAM-only application video cache does not prevent operating-system swap.
+Logs, Python bytecode, configuration, graphics cache and deployment tools may
+still write to disk. No temporary movie output is created by the playback path.
+
+Concurrent streams share GPU, CPU, network, threads and cache.
+Capacity depends on the machine and sources; there is no fixed stream-count
+guarantee. Browser compatibility, supported HDR base layers and driver processing
+remain constraints even when the encoder itself is available.

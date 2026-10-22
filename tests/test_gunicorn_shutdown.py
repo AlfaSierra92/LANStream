@@ -30,6 +30,7 @@ server.authentication_required = lambda: False
 server.get_root = lambda index: root
 server.path_is_excluded = lambda path: False
 server.selected_transcoder = lambda: {'ok': True, 'key': 'software', 'label': 'Software'}
+server.probe = lambda source: {}
 code = "import os,sys,time; from pathlib import Path; Path(sys.argv[1]).write_text(str(os.getpid())); sys.stderr.write('x'*200000); sys.stderr.flush(); exec('while True: sys.stdout.buffer.write(b\"video-data\"*1000); sys.stdout.flush(); time.sleep(.05)')"
 server.transcode_command = lambda *args: [sys.executable, '-u', '-c', code, str(root / 'encoder.pid')]
 class Upstream(BaseHTTPRequestHandler):

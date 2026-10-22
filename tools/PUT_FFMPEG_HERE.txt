@@ -1,1 +1,25 @@
-Place Windows ffmpeg.exe and ffprobe.exe in this folder before running build_windows.bat.
+Windows tools for building LANStream
+====================================
+
+Place these Windows executables in this directory:
+    ffmpeg.exe
+    ffprobe.exe
+
+Prefer matching tools from the same compatible FFmpeg build.
+CPU HDR-to-SDR conversion requires zscale/libzimg and tonemap in that build.
+
+build_windows.bat also requires a CBR backend:
+    7zz.exe
+or:
+    7z.exe
+    7z.dll
+
+Run build_windows.bat from the project root.
+Tools are copied beside LANStream.exe in dist\LANStream\.
+
+At runtime, FFmpeg/FFprobe are found beside the application, then on PATH.
+The script can copy an optional ffmpeg-nvenc.exe, but the current application
+does not select it automatically.
+
+See README-WINDOWS.txt for complete instructions and THIRD_PARTY_LICENSES.md
+for attribution. Preserve the notices for the builds actually distributed.

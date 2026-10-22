@@ -1,0 +1,11 @@
+# Windows example: paths belong to the machine running LANStream.
+# The process account must already be able to read UNC shares.
+port=8060
+use_master_password=false
+master_password=
+transcoder=auto
+default_quality=auto
+
+D:\Movies
+D:\TV
+\\NAS\Media\Video

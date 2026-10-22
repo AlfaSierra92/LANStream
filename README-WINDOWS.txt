@@ -1,97 +1,197 @@
 LANStream for Windows
 =====================
 
-LANStream runs as a normal Windows application. Docker and Python are not
-required after the package has been built.
+LANStream exposes server folders through a local-network web interface.
+The server reads media and uses FFmpeg for conversion when needed.
+Client devices use a browser and do not install LANStream.
 
-Expected release folder:
+A built package requires neither Python nor Docker.
+These instructions describe the current repository implementation.
+
+1. Extract the complete package
+-------------------------------
+
+A release directory typically contains:
 
 LANStream\
     LANStream.exe
     config.txt
     ffmpeg.exe
     ffprobe.exe
+    7zz.exe
     cache\
     _internal\
 
-Configuration
--------------
-Edit config.txt beside LANStream.exe.
+The alternative 7-Zip layout is 7z.exe + 7z.dll.
+Exact supplied tools depend on the distributed package.
 
-Examples:
+Keep the complete directory, including _internal.
+Do not move only LANStream.exe.
+Use a writable location for configuration and graphics derivatives.
+
+2. Start
+--------
+
+Run LANStream.exe and leave its console open.
+The Waitress launcher prints local/LAN addresses and the selected backend.
+The default port is 8060.
+
+On the server:
+    http://127.0.0.1:8060
+
+On another device, use the actual server LAN address, for example:
+    http://192.168.1.50:8060
+
+The IP is illustrative. Allow the appropriate local-network firewall access
+when prompted.
+
+3. Configure libraries
+----------------------
+
+Use Settings or edit config.txt beside the executable.
+A passwordless example:
 
 port=8060
 use_master_password=false
+master_password=
 transcoder=auto
+default_quality=auto
 
 D:\Movies
 D:\TV
-\\NAS\Media\Home Videos
+\\NAS\Media\Video
 
-UNC network paths are supported as long as the Windows account running
-LANStream has permission to read them.
+These paths belong to the Windows server, not the browser device.
+UNC shares must already be readable by the process account.
+Desktop mapped drives may not exist for another account/service.
+Use absolute paths without quotes.
 
-Starting LANStream
-------------------
-Double-click LANStream.exe.
+Passwordless users can also administer the server.
+Settings supports a shared password or password profiles with roots/exclusions.
+The first profile is administrator. Passwords remain plain text in config.txt.
 
-A console window remains open and displays:
-- localhost URL
-- LAN URL
-- selected transcoder
+Blank password fields preserve existing passwords.
+Port changes require restart. Restart after manually editing shared-password or
+backend settings to update runtime values initialized at startup.
 
-Windows may ask whether LANStream may communicate through Windows Firewall.
-For normal home use, allow it on Private networks.
+4. Playback and viewers
+-----------------------
 
-Transcoding
------------
-With transcoder=auto LANStream tries, in order:
-1. Intel QSV on Windows
-2. NVIDIA NVENC on Windows
-3. AMD AMF on Windows
-4. software libx264 fallback
+Open a library, choose a video and start playback.
+Auto uses original delivery where compatible, otherwise conversion.
+Original disables conversion and may fail on an incompatible browser.
+360p–4K presets and Custom set output size/bitrate targets.
 
-The included FFmpeg build must provide the encoder being used. The
-/transcoder-status page shows each backend test and which one was selected.
+The gear opens quality, codec and track controls.
+Playback info (I) shows encoder, tone mapping, buffer, FPS and transfers.
+Activity at /transcoder-status shows active requests and backend tests.
 
-Building
---------
-1. Install Python 3 on Windows.
-2. Put ffmpeg.exe and ffprobe.exe in:
-       tools\
-3. Double-click:
-       build_windows.bat
-4. The distributable folder will be:
-       dist\LANStream\
+Converted movies/subtitles are not written as temporary media files.
+Image thumbnails, document pages and TIFF derivatives can use the disk graphics
+cache. Video posters/thumbnails are not generated.
 
-PyInstaller creates a one-folder distribution. End users do not need Python.
+Other viewers support images, PDF, CBZ, CBR and plain text.
+CBR requires 7-Zip; Markdown is shown as plain text.
 
+5. Windows transcoding and HDR
+-----------------------------
 
-NVENC driver / FFmpeg compatibility
------------------------------------
-NVENC has an API-version relationship between the FFmpeg build and the NVIDIA
-driver. A very new FFmpeg may require a newer NVIDIA driver even though the GPU
-itself supports NVENC.
+Auto tests, in order:
+    Intel QSV
+    NVIDIA NVENC
+    AMD AMF
+    software libx264
 
-If /transcoder-status reports something such as:
+An actual short encode must succeed; an encoder name in FFmpeg's list is not enough.
+HEVC/AV1 output has additional checks and may use software.
+Converted audio is stereo at 48 kHz in AAC, Opus or MP3.
 
-    Required NVENC API: 13.1
-    Found: 13.0
+QSV/NVENC/AMF currently accelerate encoding only; decoding and video filters remain
+software. Full decode/filter/encode VAAPI processing applies to the Linux VAAPI path.
 
-you have two choices:
+Recognized HDR transcoding automatically produces SDR BT.709.
+Windows HDR processing uses CPU zscale/libzimg and Hable tonemap.
+The FFmpeg build must include those filters. A cached in-memory compressed HDR10
+fixture tests the path before HDR streaming; missing/failed support returns an error.
+SDR input is not tone-mapped. Original bytes remain unchanged.
 
-1. Upgrade the NVIDIA driver to one which provides the API required by that
-   FFmpeg build.
+Supported Dolby Vision HDR10/HLG-compatible base layers can be used.
+Dynamic metadata/enhancement layers are not reconstructed; unsupported proprietary
+profiles such as Profile 5 are rejected for conversion.
 
-2. Put an older FFmpeg build which works with the installed driver in the
-   tools folder as:
+The runtime chooses ffmpeg.exe beside the application, then PATH.
+It does not automatically choose ffmpeg-nvenc.exe or test historical
+modern/legacy/minimal NVENC profiles. The build script can copy that optional file,
+but the current application does not select it.
 
-       ffmpeg-nvenc.exe
+For an NVENC API mismatch, align the installed driver and actual ffmpeg.exe build.
+After changes use Activity's Retest transcoder backends, which also clears HDR
+capability/filter caches.
 
-   then rebuild LANStream.
+6. Integrated NZBDAV
+-------------------
 
-LANStream tests three NVENC option profiles (modern, legacy-compatible, and
-minimal) against both the normal ffmpeg.exe and optional ffmpeg-nvenc.exe. The
-first combination which actually encodes a test frame is used for real streams.
-The selected profile and FFmpeg executable are displayed on
-/transcoder-status.
+Add these settings to the active file:
+
+nzbdav_url=http://nzbdav.example:3000/
+nzbdav_user=WEBDAV_USER
+nzbdav_password=WEBDAV_PASSWORD
+nzbdav_root=content
+nzbdav_ram_cache_mb=256
+
+Replace endpoint and credentials with WebDAV values, not rclone RC values.
+The administrator receives an NZBDAV library.
+No rclone, FUSE or tmpfs is required.
+
+The video cache holds 4 MiB RAM blocks and evicts least recently used blocks while
+movies remain open. Movies may exceed cache size. Seeking to evicted data rereads it.
+The budget is per process and excludes FFmpeg/Python/socket overhead.
+Operating-system swap is separate. Graphics derivatives can still use disk.
+
+7. Stop, update and back up
+--------------------------
+
+Use Ctrl+C in the console. Shutdown interrupts streams and cleans up managed
+external processes.
+
+Back up config.txt before replacing the complete distribution.
+Preserve personal configuration instead of overwriting it with an example.
+Graphics cache backup is optional; RAM caches are recreated.
+Reload open players after updates.
+
+8. Build on Windows
+-------------------
+
+Install Python compatible with dependencies and the py launcher.
+Place these Windows tools in the project's tools directory:
+    ffmpeg.exe
+    ffprobe.exe
+
+For the build script, also provide one alternative:
+    7zz.exe
+or:
+    7z.exe
+    7z.dll
+
+Run build_windows.bat.
+It creates .venv-build, installs requirements.txt and PyInstaller, uses LANStream.spec,
+and produces the complete folder distribution in dist\LANStream\.
+
+The script copies the current config.txt into the output.
+Before distributing a package, replace personal paths/passwords/WebDAV secrets with
+a suitable example. Do not distribute production credentials.
+
+Retain the notices/licenses relevant to the tools actually distributed.
+Compiled packaging does not place dependencies under The Unlicense.
+
+Full documentation in the source tree
+-------------------------------------
+
+README.md
+manual.md
+docs/configuration.md
+docs/architecture.md
+docs/troubleshooting.md
+examples/
+
+See THIRD_PARTY_LICENSES.md for dependency attribution.

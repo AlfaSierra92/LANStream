@@ -178,6 +178,7 @@ function updateLocalStats(){
  put('statVideoTarget',streamIsDirect?'Original (no conversion)':videoKbps?`${videoKbps/1000} Mbps`:'Variable bitrate (no cap)');
  put('statAudioTarget',!selectedAudio?'No audio':streamIsDirect?'Original':`${quality==='custom'?custom.audio:profile.audio_kbps} Kbps`);
  if(streamIsDirect)put('statEncoder','None · direct delivery');
+ put('statToneMapping',streamIsDirect?'Off · original stream':lastTechnical?.tone_mapping||'Waiting for encoder');
  put('statSubtitle',subtitleSelect?.value?subtitleSelect.selectedOptions[0].textContent:'Off');
  put('statState',video.error?'Playback error':video.ended?'Ended':video.paused?'Paused':video.readyState<3?'Buffering':'Playing');
  let ahead=0;for(let i=0;i<video.buffered.length;i++){if(video.currentTime>=video.buffered.start(i)&&video.currentTime<=video.buffered.end(i)){ahead=video.buffered.end(i)-video.currentTime;break;}}
@@ -206,6 +207,7 @@ async function refreshStats(){
   const stream=data.stream;
   if(stream){
    lastTechnical=stream.technical||null;
+   put('statToneMapping',streamIsDirect?'Off · original stream':lastTechnical?.tone_mapping||'—');
    if(!streamIsDirect){put('statEncoder',lastTechnical?.encoder_label||stream.detail.split(' · ')[0]);if(lastTechnical?.fallback)put('statReason',lastTechnical.fallback);}
    put('statBandwidth',`${stream.bandwidth_mbps.toFixed(2)} Mbps${stream.active?'':' · request completed'}`);
    put('statTransferred',`${(stream.bytes_sent/1048576).toFixed(2)} MiB`);

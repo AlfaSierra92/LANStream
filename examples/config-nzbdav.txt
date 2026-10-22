@@ -1,0 +1,17 @@
+# NZBDAV-only example. Replace endpoint and WebDAV credentials.
+# No rclone, FUSE or disk video cache is required.
+# Passwordless access also permits server administration.
+port=8060
+use_master_password=false
+master_password=
+transcoder=auto
+default_quality=auto
+nzbdav_url=http://nzbdav.example:3000/
+nzbdav_user=WEBDAV_USER
+nzbdav_password=WEBDAV_PASSWORD
+nzbdav_root=content
+nzbdav_ram_cache_mb=256
+
+# On Linux, explicitly request the VAAPI pipeline with transcoder=vaapi.
+# Verify the render device and actual backend in Activity.
+# HDR10 transcoding automatically uses GPU tone mapping when supported.

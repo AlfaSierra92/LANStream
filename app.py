@@ -35,6 +35,7 @@ from media_runtime import media_runtime
 from media_cache import MetadataCache
 from nzbdav import MediaService, WebDAVPath, RemoteError
 from subtitle_windows import capture_packets, matroska_payload, subtitle_container
+from tone_mapping import tone_mapping_plan, ToneMappingError, HDR10_PROBE, HDR10_VIDEO
 
 run_media_command = media_runtime.run
 
@@ -774,8 +775,8 @@ def probe_media_target(path: Path, target: Path | str) -> dict[str, Any]:
         FFPROBE, "-v", "error",
         "-show_entries",
         "format=duration,size,format_name,bit_rate,start_time:"
-        "stream=index,codec_type,codec_name,profile,level,width,height,channels,channel_layout,sample_rate,bit_rate,avg_frame_rate,pix_fmt,color_space,color_transfer,color_primaries,extradata:"
-        "stream_tags=language,title",
+        "stream=index,codec_type,codec_name,profile,level,width,height,channels,channel_layout,sample_rate,bit_rate,avg_frame_rate,pix_fmt,color_space,color_transfer,color_primaries,color_range,extradata:"
+        "stream_tags=language,title:stream_side_data=side_data_type,dv_profile,dv_bl_signal_compatibility_id",
         '-show_data', "-of", "json", media_input_target(target),
     ]
     try:
@@ -1083,6 +1084,8 @@ def selected_transcoder(force_refresh: bool = False) -> dict:
     global _transcoder_cache
     if force_refresh:
         codec_encoder_test.cache_clear()
+        ffmpeg_filters.cache_clear()
+        tone_mapping_test.cache_clear()
     if _transcoder_cache is not None and not force_refresh:
         return _transcoder_cache
 
@@ -2116,11 +2119,13 @@ def transcode_command(
     quality: dict | None = None,
     video_codec: str = "h264",
     audio_codec: str = "aac",
+    source_video: dict | None = None,
 ) -> list[str]:
     quality = quality or QUALITY_PROFILES["auto"]
     if quality == QUALITY_PROFILES["source"]:
         raise ValueError("Original quality must not be transcoded")
     limited = bool(quality["video_kbps"])
+    mapping = tone_mapping_plan(source_video, backend)
     cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-nostdin"]
     if backend == "vaapi":
         # Share one device between decoder, VPP and encoder. Keep decoded
@@ -2131,19 +2136,26 @@ def transcode_command(
                 "-hwaccel_output_format", "vaapi"]
     cmd += playback_input_args(source, start) + ["-map", "0:v:0"]
     cmd += ["-map", f"0:{audio_index}"] if audio_index is not None else ["-an"]
-    filters = []
+    filters = list(mapping.filters)
     scale = ""
     if quality["width"]:
         # Bound both dimensions, preserve aspect ratio and never enlarge the source.
         scale = f"w='min(iw,{quality['width']})':h='min(ih,{quality['height']})':force_original_aspect_ratio=decrease:force_divisible_by=2"
     if backend == "vaapi":
         # VPP also converts Main 10 / P010 input to the encoder's NV12 format.
-        filters.append("scale_vaapi=" + (scale + ":" if scale else "") + "format=nv12")
+        filters.append("scale_vaapi=" + (scale + ":" if scale else "") + "format=nv12" + (":out_range=tv" if mapping.active else ""))
     else:
         if scale:
             filters.append("scale=" + scale)
         filters.append("format=yuv420p" if backend == "software" else "format=nv12")
+    if mapping.active:
+        # Metadata-only filter: does not download hardware surfaces. Remove
+        # stale mastering/light/Dolby side data after the actual color transform.
+        filters.append('sidedata=mode=delete')
     cmd += ["-vf", ",".join(filters)]
+    if mapping.active:
+        cmd += ['-color_primaries', 'bt709', '-color_trc', 'bt709',
+                '-colorspace', 'bt709', '-color_range', 'tv', '-map_metadata', '-1']
     encoder = VIDEO_ENCODERS[backend][video_codec]
     options = {
         "vaapi": ["-c:v", "h264_vaapi"] + (["-rc_mode", "VBR"] if limited else ["-qp", "24"]),
@@ -2172,6 +2184,31 @@ def transcode_command(
     cmd += ["-movflags", "+frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset",
             "-frag_duration", "500000", "-flush_packets", "1", "-f", "mp4", "pipe:1"]
     return cmd
+
+
+@lru_cache(maxsize=1)
+def ffmpeg_filters() -> frozenset[str]:
+    result = run_media_command([FFMPEG, '-hide_banner', '-filters'], capture_output=True, text=True, timeout=10)
+    if result.returncode:
+        raise ToneMappingError('Unable to inspect FFmpeg tone-mapping filters.')
+    return frozenset(re.findall(r'^\s*[TSC\.A-Z|]{3}\s+(\w+)\s', result.stdout, re.MULTILINE))
+
+
+@lru_cache(maxsize=8)
+def tone_mapping_test(backend: str) -> tuple[bool, str]:
+    """Exercise the HDR pipeline once per backend using a bundled RAM fixture."""
+    try:
+        plan = tone_mapping_plan(HDR10_VIDEO, backend)
+        missing = plan.required - ffmpeg_filters()
+        if missing:
+            return False, 'FFmpeg is missing tone-mapping filters: ' + ', '.join(sorted(missing))
+        command = transcode_command(backend, Path('hdr-test'), None, 0, source_video=HDR10_VIDEO)
+        before, after = command.index('-skip_estimate_duration_from_pts'), command.index('-map')
+        command[before:after] = ['-f', 'hevc', '-i', 'pipe:0', '-frames:v', '1']
+        result = run_media_command(command, input=HDR10_PROBE, capture_output=True, timeout=20)
+        return result.returncode == 0 and bool(result.stdout), (result.stderr or b'').decode('utf-8', 'replace')[-1500:]
+    except (OSError, subprocess.TimeoutExpired, ToneMappingError) as error:
+        return False, str(error)
 
 
 @lru_cache(maxsize=32)
@@ -2271,21 +2308,31 @@ def transcode(root_index, relpath):
         except ValueError:
             abort(400)
 
-    if audio_index is not None:
-        _, audio_tracks, _ = stream_lists(probe(source))
-        if audio_index not in {track["index"] for track in audio_tracks}:
-            abort(400)
-
     backend, fallback = codec_transcoder(transcoder, video_codec)
     if not backend:
         return Response(f"No encoder available for {VIDEO_CODECS[video_codec]['label']}.\n{fallback}", status=503, mimetype="text/plain")
+    info = probe(source)
+    source_video = next((track for track in info.get('streams', []) if track.get('codec_type') == 'video'), {})
+    if audio_index is not None:
+        _, audio_tracks, _ = stream_lists(info)
+        if audio_index not in {track['index'] for track in audio_tracks}:
+            abort(400)
+    try:
+        mapping = tone_mapping_plan(source_video, backend)
+    except ToneMappingError as error:
+        return Response(str(error), status=415, mimetype='text/plain')
+    if mapping.active:
+        supported, detail = tone_mapping_test(backend)
+        if not supported:
+            return Response('HDR-to-SDR tone mapping is unavailable on the selected backend.\n' + detail,
+                            status=503, mimetype='text/plain')
     if audio_index is not None and audio_codec != "aac":
         supported, detail = codec_encoder_test("software", audio_codec, True)
         if not supported:
             return Response(f"Audio encoder unavailable: {detail}", status=503, mimetype="text/plain")
     encoder = VIDEO_ENCODERS[backend][video_codec]
     encoder_label = f"{BACKEND_LABELS[backend]} · {encoder}"
-    cmd = transcode_command(backend, target, audio_index, start, quality, video_codec, audio_codec)
+    cmd = transcode_command(backend, target, audio_index, start, quality, video_codec, audio_codec, source_video)
     app.logger.info("Starting %s transcode: %s", encoder_label,
                     source.name if isinstance(source, WebDAVPath) or source.suffix.lower() == ".strm" else " ".join(cmd))
     try:
@@ -2297,7 +2344,8 @@ def transcode(root_index, relpath):
         backend, source, start_offset=start,
         detail=f"{encoder_label} · {VIDEO_CODECS[video_codec]['label']} / {AUDIO_CODECS[audio_codec]['label'] if audio_index is not None else 'No audio'} · {quality['label']}",
         technical={"video_codec": video_codec, "audio_codec": audio_codec if audio_index is not None else None,
-                   "encoder": encoder, "encoder_label": encoder_label, "fallback": fallback},
+                   "encoder": encoder, "encoder_label": encoder_label, "fallback": fallback,
+                   "tone_mapping": mapping.label},
     )
     stderr_tail = bytearray()
 

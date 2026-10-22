@@ -81,6 +81,9 @@ class RuntimeTests(unittest.TestCase):
                     self.assertFalse(tracker.snapshot())
 
     def test_unconsumed_transcode_response_releases_child_and_tracker(self):
+        probe = patch.object(server, 'probe', return_value={})
+        probe.start()
+        self.addCleanup(probe.stop)
         process = Mock(stdout=io.BytesIO(b'mp4'), stderr=io.BytesIO(), returncode=0)
         process.poll.return_value = 0
         tracker = server.StreamTracker()

@@ -1,0 +1,16 @@
+# Replace every example password before use.
+# The first profile administers Settings and any configured NZBDAV library.
+port=8060
+use_master_password=false
+transcoder=auto
+default_quality=auto
+
+<CHANGE_THIS_ADMIN_PASSWORD>
+/media/Movies
+/media/TV
+
+<CHANGE_THIS_GUEST_PASSWORD>
+/media/Movies
+-/Private
+/media/TV
+-/Drafts

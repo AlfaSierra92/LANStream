@@ -1,0 +1,10 @@
+# Linux/Docker example: paths belong to the server/container.
+# With /srv/media mounted at /media, create Movies and TV under /srv/media.
+port=8060
+use_master_password=false
+master_password=
+transcoder=auto
+default_quality=auto
+
+/media/Movies
+/media/TV

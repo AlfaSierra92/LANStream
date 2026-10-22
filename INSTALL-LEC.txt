@@ -1,55 +1,132 @@
-LANStream v0.4.0 Linux/Docker update
+LANStream and Linux Easy Config (LEC)
 ======================================
 
-IMPORTANT CONFIG MOVE
+This guide covers Docker installations managed through LEC and the bundled
+LANStream-LEC-module-1.0.7.lec package.
+
+It is not a standalone LANStream installer.
+Use README.md/manual.md to build and start the service.
+The repository includes the .lec module; do not assume a particular .lecdock
+deployment preset is also present.
+
+1. Locate the effective configuration
+------------------------------------
+
+The location depends on deployment and LANSTREAM_CONFIG_FILE.
+The application does not require any particular /home directory.
+
+Suggested host layout:
+    /srv/lanstream/config/config.txt
+    /srv/lanstream/cache/
+
+Suggested bind mounts:
+    /srv/lanstream/config -> /config
+    /srv/lanstream/cache  -> /cache
+
+Environment:
+    LANSTREAM_CONFIG_FILE=/config/config.txt
+    LANSTREAM_CACHE_DIR=/cache
+
+Library paths must refer to container locations.
+If /srv/media is mounted at /media, configure /media/Movies.
+
+Historical deployments may bind only config.txt.
+The application can read that file, but atomic Settings saves can fail.
+Mount the writable parent directory to support web-based saving.
+
+When migrating from paths.txt, explicitly copy roots/profile sections into
+config.txt and verify the effective path. Current code does not import paths.txt.
+
+2. What the bundled 1.0.7 module does
+------------------------------------
+
+The external LEC module:
+- discovers LANStream Docker containers;
+- displays runtime information when the local API is accessible;
+- opens the web UI and /transcoder-status;
+- restarts the container;
+- edits roots, exclusions and the access settings it knows;
+- translates host/container paths using actual bind mounts;
+- uses LEC's privileged configuration/Docker operations when required.
+
+Refresh Status uses HTTP. Rescan Installations repeats Docker discovery and can
+request system authorization through LEC's privilege model.
+These discovery functions belong to the module, not LANStream itself.
+
+Status requests reuse an in-memory HTTP session.
+Authenticated deployments use the shared password or first profile's password.
+The application's status API uses its normal session gate.
+
+3. Compatibility with current settings
+-------------------------------------
+
+The module predates current quality profiles and integrated NZBDAV.
+Its historical Low Bandwidth controls no longer govern current playback quality.
+
+Its render_config reconstructs settings it recognizes.
+Saving through this module can remove default_quality and the nzbdav_url,
+nzbdav_user, nzbdav_password, nzbdav_root and nzbdav_ram_cache_mb fields.
+
+For current configurations:
+- back up the file before saving through the module;
+- use LANStream Settings for supported web controls;
+- configure NZBDAV directly in the effective file;
+- use module status/open/restart without resaving if you need to preserve fields
+  the module does not know.
+
+The .lec package is not rebuilt automatically with the documentation.
+It is not a complete editor for the current application.
+
+4. Avoid unexpected environment overrides
+----------------------------------------
+
+These override matching application settings:
+    LANSTREAM_TRANSCODER
+    LANSTREAM_USE_MASTER_PASSWORD
+    LANSTREAM_PASSWORD
+
+Do not impose conflicting Docker values if the file/UI should manage them.
+LANSTREAM_CONFIG_FILE and LANSTREAM_CACHE_DIR locate resources and can remain set.
+
+The external port comes from Docker's mapping.
+Included Gunicorn binds to 8080; port= alone does not change it.
+Restarting after a file edit does not create a different Docker port mapping.
+
+5. GPU, HDR and caches
 ---------------------
-The old file:
 
-/home/chip/Projects/LANStream/config/paths.txt
+For VAAPI expose /dev/dri and verify permissions, driver and selected render node.
+The VAAPI path keeps video decode, pixel conversion, resizing, supported HDR10/PQ
+tone mapping and encoding on the GPU.
+Audio, networking and containers still use CPU.
 
-is replaced by:
+HDR10 transcoding automatically produces SDR BT.709.
+Tone mapping is capability-tested separately from HEVC decoding.
+A driver can support HEVC Main 10 decoding without HDR processing.
+A failed hardware tone-mapping path does not silently fall back to CPU.
+Original delivery is unchanged; unsupported Dolby Vision profiles are not converted.
 
-/home/chip/Projects/LANStream/config.txt
+Integrated NZBDAV uses a bounded RAM-only video block cache without rclone.
+The /cache directory contains separate graphics derivatives and can use disk.
 
-Before replacing the source, copy your existing path/profile lines into the new
-config.txt.
+Check Activity/Playback info for the actual backend and tone-mapping path.
+Do not infer successful acceleration solely from transcoder= in the file.
 
-The config subdirectory is no longer used.
+6. Update and restore
+---------------------
 
-Example config.txt:
+Preserve configuration and container deployment details.
+Rebuild the image and recreate the container with its mounts, ports and GPU.
+Restart does not incorporate changed Python files into an old image.
 
-port=8060
-use_master_password=false
-master_password=
-transcoder=auto
+Verify Settings, a local library, any NZBDAV connection and Playback info.
+Reload open players after an update.
 
-/mnt/media/Movies
-/mnt/media/TV
+Source documentation
+--------------------
 
-Docker notes
-------------
-The updated LEC preset bind-mounts:
-
-/home/chip/Projects/LANStream/config.txt -> /config.txt
-
-and overrides LANStream's internal port to 8080. The LEC host-port choice still
-controls the LAN-facing Docker port.
-
-The cache remains:
-
-/home/chip/Projects/LANStream/cache
-
-Transcoding
------------
-Linux now tries VAAPI first and automatically falls back to software libx264 if
-VAAPI is unavailable.
-
-Check:
-
-http://SERVER-IP:PORT/transcoder-status
-
-Windows
--------
-See README-WINDOWS.txt and build_windows.bat.
-
-No database or installation service is required for the Windows build.
+README.md                 Overview and quick start.
+manual.md                 Complete installation/use.
+docs/configuration.md     Settings, profiles, environment and optional rclone.
+docs/architecture.md      Data flow and cache/HDR internals.
+docs/troubleshooting.md   GPU, tone mapping, buffering and errors.
