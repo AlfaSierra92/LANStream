@@ -90,6 +90,94 @@ URLs must be updated in the STRM file.
 
 Videos will be streamed directly to the browser when possible.  For formats unsupported by the browser, LANStream automatically detects available encoders and selects an appropriate backend.
 
+#### Integrated NZBDAV with a bounded RAM cache
+
+LANStream can browse and play NZBDAV videos directly over WebDAV. No rclone
+process, FUSE mount, tmpfs or disk media cache is required. Set these values in
+`config.txt` on the LANStream server:
+
+```ini
+nzbdav_url=http://YOUR-NZBDAV-SERVER:3000/
+nzbdav_user=YOUR-WEBDAV-USERNAME
+nzbdav_password=YOUR-WEBDAV-PASSWORD
+nzbdav_root=content
+nzbdav_ram_cache_mb=256
+```
+
+Use the WebDAV endpoint and credentials, not the rclone RC address or password.
+Leave `nzbdav_url` blank to disable the integration. `nzbdav_root` is relative to
+the endpoint; an empty value exposes its root. Changes are picked up on the next
+NZBDAV request and replace the remote connection, ending existing NZBDAV streams.
+Saving unrelated settings in the web UI preserves these configuration values.
+
+A **NZBDAV** library appears on the home page. In password-profile mode it is
+available only to the first (administrator) profile; restricted profiles cannot
+open it by guessing its address. Master-password and passwordless modes follow
+their usual administrator access rules. The integration browses folders and video
+files; remote STRM pointers, images, comics, PDF and text viewers are not included.
+Existing local media libraries continue to work as before.
+
+The RAM cache stores 4 MiB blocks and evicts the least recently used blocks even
+when their video remains open. A video larger than the cache can keep playing
+without retaining all earlier bytes; seeking back downloads evicted blocks again.
+Concurrent readers share a single fetch for the same block. FFprobe, original
+playback, transcoding and subtitle extraction all use this shared cache. No media
+data is written to temporary files. Backend HTTP requests reuse TCP/TLS connections
+and include WebDAV cookies and byte ranges; servers that ignore ranges are rejected
+rather than causing an
+unbounded whole-file download. ETag/version changes create new cache entries.
+
+`nzbdav_ram_cache_mb` accepts 8–16384 MiB (default 256), rounded down to complete
+4 MiB blocks. This bounds **cached media blocks plus reservations for in-flight
+block reads**, per server worker. It does not include Python/FFmpeg overhead,
+directory metadata, socket buffers or the small delivery chunks (up to 64 KiB per
+reader). A stalled browser never pins a whole block across network writes. The
+standard Gunicorn configuration uses one worker; extra workers each have their own
+budget. Activity shows usage, reserved bytes, hits, misses and evicted blocks.
+
+The FFmpeg gateway binds only to loopback, starts on demand and requires random
+capability tokens. Browsers receive normal authenticated LANStream media URLs;
+WebDAV credentials are not placed in player pages or FFmpeg command arguments.
+NZBDAV must support PROPFIND, HEAD, Content-Length and HTTP byte ranges. An initial
+connection/demux probe and cache misses still depend on remote backend latency.
+
+#### Slow rclone FUSE mounts (optional existing libraries)
+
+Transcoded playback reuses the browser's existing buffer for seeks within downloaded
+ranges. Multiple unbuffered seeks within 200 ms start only the final encoder request.
+Subtitle changes replace the text track without restarting video. Encoder and subtitle
+inputs omit a redundant seek to zero and skip MPEG-PS/TS end-of-file duration scans;
+FFprobe still reads duration normally for the player. Nonzero seeks remain before the
+input for accurate keyframe-based seeking. Full stream analysis remains enabled so
+audio and subtitle detection is not sacrificed for startup speed.
+
+The rclone mount configuration intentionally uses **no VFS disk cache**:
+`--vfs-cache-mode=off`, `--buffer-size=128M`, sequential chunk reading from 64 MB
+up to 512 MB, and `--use-cookies` for NZBDAV WebDAV sessions. No cache directory is
+created. `--vfs-read-ahead` is omitted because it requires full disk caching.
+The buffer uses RAM, up to 128 MB per open file; it is not a shared cache between
+FFprobe, FFmpeg and subtitle extraction. Reopening or seeking outside buffered
+data can therefore cause fresh remote reads. LANStream reduces encoder restarts
+and reuses metadata in memory to limit this overhead, while retaining seeking.
+See [rclone's buffering documentation](https://rclone.org/commands/rclone_mount/#vfs-file-buffering)
+and [NZBDAV's cookie guidance](https://github.com/nzbdav-dev/nzbdav/blob/main/docs/setup-guide.md).
+
+`tools/mount_nzbdav.sh` provides a Linux mount command for `nzbdav:` at `/mnt/nzbdav`,
+keeping the existing one-hour directory cache and RC address. It requires rclone
+1.70.3 or later (`--links` support). Stop the existing mount through its service
+manager before running the replacement; the script does not unmount or change any
+service automatically. Set `RCLONE_RC_PASS` in the shell or service environment,
+then run `sh tools/mount_nzbdav.sh`. RC credentials are never stored in the script.
+Optional environment overrides are `RCLONE_CONFIG_FILE`, `NZBDAV_MOUNT`,
+`NZBDAV_BUFFER_SIZE`, `RCLONE_BIN`, `RCLONE_RC_ADDR` and
+`RCLONE_RC_USER`. Directory caching assumes existing RC notifications invalidate
+new content; without notifications, lower `--dir-cache-time`, for example to `20s`.
+
+Rebuild/recreate LANStream's Docker container to apply player and encoder changes.
+The mount changes must be applied on the host running rclone. Performance on an actual
+NZBDAV mount depends on its backend throughput and latency; local FFmpeg tests cannot
+measure that improvement.
+
 **Windows**
 
 - Intel Quick Sync Video (QSV)

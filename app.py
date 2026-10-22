@@ -33,6 +33,7 @@ import fitz
 
 from media_runtime import media_runtime
 from media_cache import MetadataCache
+from nzbdav import MediaService, WebDAVPath, RemoteError
 
 run_media_command = media_runtime.run
 
@@ -98,6 +99,11 @@ def load_settings() -> dict[str, str]:
         "master_password": "",
         "transcoder": "auto",
         "default_quality": "auto",
+        "nzbdav_url": "",
+        "nzbdav_user": "",
+        "nzbdav_password": "",
+        "nzbdav_root": "",
+        "nzbdav_ram_cache_mb": "256",
     }
     for raw in read_config_lines():
         line = raw.strip()
@@ -146,6 +152,48 @@ app = Flask(
     static_folder=str(RESOURCE_DIR / "static"),
 )
 app.secret_key = SESSION_SECRET
+
+NZBDAV_ROOT_INDEX = 2147483647
+_nzbdav_lock = threading.Lock()
+_nzbdav_service = None
+_nzbdav_config = None
+
+
+def stop_nzbdav():
+    global _nzbdav_service, _nzbdav_config
+    with _nzbdav_lock:
+        service = _nzbdav_service
+        _nzbdav_service = _nzbdav_config = None
+    if service:
+        service.close()
+
+
+media_runtime.add_cleanup("nzbdav", stop_nzbdav)
+
+
+@request_cached
+def nzbdav_service():
+    global _nzbdav_service, _nzbdav_config
+    if media_runtime.stopping.is_set():
+        abort(503, description="LANStream is stopping.")
+    settings = load_settings()
+    config = tuple(settings[key] for key in ("nzbdav_url", "nzbdav_user", "nzbdav_password",
+                                             "nzbdav_root", "nzbdav_ram_cache_mb"))
+    with _nzbdav_lock:
+        if config == _nzbdav_config:
+            return _nzbdav_service
+        try:
+            replacement = MediaService(*config[:4], cache_mb=int(config[4])) if config[0] else None
+        except ValueError:
+            abort(503, description="Invalid NZBDAV configuration. Check its URL, root and RAM limit in config.txt.")
+        if _nzbdav_service:
+            _nzbdav_service.close()
+        _nzbdav_service, _nzbdav_config = replacement, config
+        return replacement
+
+
+def media_input_target(target):
+    return target.input_url() if isinstance(target, WebDAVPath) else str(target)
 
 
 class StreamTracker:
@@ -521,6 +569,8 @@ def resolved_exclusions(paths: tuple[Path, ...]) -> tuple[Path, ...]:
 
 
 def path_is_excluded(path: Path) -> bool:
+    if isinstance(path, WebDAVPath):
+        return not can_manage_settings()
     profile = active_profile()
     if not profile:
         return True
@@ -545,10 +595,19 @@ def path_is_excluded(path: Path) -> bool:
 
 
 def root_label(path: Path, index: int) -> str:
+    if isinstance(path, WebDAVPath):
+        return "NZBDAV"
     return path.name.strip() or f"Media {index + 1}"
 
 
 def get_root(index: int) -> Path:
+    if index == NZBDAV_ROOT_INDEX:
+        if not can_manage_settings():
+            abort(403)
+        service = nzbdav_service()
+        if service is None:
+            abort(404)
+        return WebDAVPath(service, service.root)
     roots = load_roots()
     if index < 0 or index >= len(roots):
         abort(404)
@@ -576,6 +635,8 @@ def safe_path(root: Path, relative: str) -> Path:
 
 
 def media_kind(path: Path) -> str | None:
+    if isinstance(path, WebDAVPath) and path.suffix.lower() not in VIDEO_EXTENSIONS - {'.strm'}:
+        return None
     kind = media_kind_for_suffix(path.suffix.lower())
     return kind if kind and path.is_file() else None
 
@@ -600,7 +661,7 @@ def is_video(path: Path) -> bool:
 
 def resolve_media_source(source: Path) -> Path | str:
     """Resolve a STRM pointer without allowing access outside the active profile."""
-    if source.suffix.lower() != ".strm":
+    if isinstance(source, WebDAVPath) or source.suffix.lower() != ".strm":
         return source
     try:
         with source.open("r", encoding="utf-8-sig") as handle:
@@ -714,15 +775,19 @@ def probe_media_target(path: Path, target: Path | str) -> dict[str, Any]:
         "format=duration,size,format_name,bit_rate:"
         "stream=index,codec_type,codec_name,profile,level,width,height,channels,channel_layout,sample_rate,bit_rate,avg_frame_rate,pix_fmt,color_space,color_transfer,color_primaries:"
         "stream_tags=language,title",
-        "-of", "json", str(target),
+        "-of", "json", media_input_target(target),
     ]
     try:
         proc = run_media_command(cmd, capture_output=True, text=True, timeout=30)
     except subprocess.TimeoutExpired:
+        if isinstance(path, WebDAVPath):
+            abort(504, description="NZBDAV source did not respond in time.")
         if path.suffix.lower() == ".strm":
             abort(504, description="STRM source did not respond in time.")
         raise
     if proc.returncode:
+        if isinstance(path, WebDAVPath):
+            abort(502, description="Unable to probe NZBDAV media. Check connection and HTTP Range support.")
         if path.suffix.lower() == ".strm":
             abort(502, description="Unable to open the STRM media source.")
         raise RuntimeError(proc.stderr.strip() or "ffprobe failed")
@@ -1197,7 +1262,7 @@ def settings_page():
                     line = raw.strip()
                     if line.startswith("#") or ("=" in line and not line.startswith(("-", "<")) and line.split("=", 1)[0].strip().lower() not in values):
                         retained.append(raw)
-                updated = {"port": str(int(port)), "use_master_password": str(mode == "master").lower(),
+                updated = {**values, "port": str(int(port)), "use_master_password": str(mode == "master").lower(),
                            "master_password": master, "transcoder": transcoder, "default_quality": default_quality}
                 content = retained + [f"{key}={value}" for key, value in updated.items()] + [""]
                 for password, paths in libraries:
@@ -1301,6 +1366,8 @@ def home():
         if not path_is_excluded(p)
     ]
     items.sort(key=lambda item: item["label"].casefold())
+    if can_manage_settings() and load_settings()["nzbdav_url"]:
+        items.append({"index": NZBDAV_ROOT_INDEX, "label": "NZBDAV", "exists": True})
     return render_template("home.html", roots=items)
 
 
@@ -1318,8 +1385,11 @@ def browse(root_index, relpath):
         "video": [], "image": [], "pdf": [], "comic": [], "text": [],
     }
     try:
-        with os.scandir(current) as directory:
-            entries = list(directory)
+        if isinstance(current, WebDAVPath):
+            entries = current.iterdir()
+        else:
+            with os.scandir(current) as directory:
+                entries = list(directory)
     except OSError as exc:
         return render_template("error.html", message=f"Unable to read folder: {exc}"), 500
 
@@ -1329,7 +1399,11 @@ def browse(root_index, relpath):
             kind = None if is_directory else media_kind_for_suffix(Path(directory_entry.name).suffix.lower())
             if not is_directory and (not kind or not directory_entry.is_file()):
                 continue
-            entry = Path(directory_entry.path)
+            entry = directory_entry if isinstance(directory_entry, WebDAVPath) else Path(directory_entry.path)
+            if isinstance(entry, WebDAVPath) and not is_directory and kind != 'video':
+                continue
+            if isinstance(entry, WebDAVPath) and entry.suffix.lower() == '.strm':
+                continue
             if path_is_excluded(entry):
                 continue
             if is_directory:
@@ -1874,10 +1948,45 @@ def media_file(root_index, relpath):
         abort(404)
 
     target = resolve_media_source(source)
+    if isinstance(target, WebDAVPath):
+        return cached_remote_response(target)
     if isinstance(target, str):
         return remote_file_response(source, target)
     mimetype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
     return ranged_file_response(target, mimetype, tracked_source=source)
+
+
+def cached_remote_response(source):
+    service = source.service
+    resource = service.client.stat(source.path)
+    requested = request.headers.get('Range')
+    interval = parse_range_header(requested, resource.size) if requested else (0, resource.size - 1)
+    if interval is None:
+        return Response(status=416, headers={'Content-Range': f'bytes */{resource.size}'})
+    start, end = interval
+    headers = {'Content-Length': str(max(0, end - start + 1)), 'Accept-Ranges': 'bytes',
+               'Cache-Control': 'no-store'}
+    if requested:
+        headers['Content-Range'] = f'bytes {start}-{end}/{resource.size}'
+    if request.method == 'HEAD':
+        return Response(status=206 if requested else 200, headers=headers,
+                        mimetype=mimetypes.guess_type(source.path)[0] or 'application/octet-stream')
+    stream_id = stream_tracker.start('direct', source, detail='NZBDAV · shared RAM cache')
+
+    def generate():
+        try:
+            for chunk in service.chunks(resource, start, end):
+                if media_runtime.stopping.is_set():
+                    break
+                stream_tracker.add_bytes(stream_id, len(chunk))
+                yield bytes(chunk)
+        finally:
+            stream_tracker.stop(stream_id)
+
+    response = Response(generate(), status=206 if requested else 200, headers=headers,
+                        mimetype=mimetypes.guess_type(source.path)[0] or 'application/octet-stream')
+    response.call_on_close(lambda: stream_tracker.stop(stream_id))
+    return response
 
 
 def best_cached_image(root_index: int, root: Path, source: Path, requested_kind: str) -> Path | None:
@@ -1987,6 +2096,17 @@ def requested_codecs() -> tuple[str, str]:
     return ("h264" if video == "auto" else video, "aac" if audio == "auto" else audio)
 
 
+def playback_input_args(source: Path | str, start: float) -> list[str]:
+    # The player already has duration from FFprobe. MPEG-PS/TS duration
+    # estimation otherwise reads the tail and seeks back on every new encoder.
+    args = ["-skip_estimate_duration_from_pts", "1"]
+    # Even -ss 0 triggers an input seek after stream analysis. Keep the
+    # demuxer's buffered packets at startup, particularly on uncached FUSE.
+    if start > 0:
+        args += ["-ss", f"{start:.3f}"]
+    return args + ["-i", media_input_target(source)]
+
+
 def transcode_command(
     backend: str,
     source: Path | str,
@@ -2003,7 +2123,7 @@ def transcode_command(
     cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-nostdin"]
     if backend == "vaapi":
         cmd += ["-vaapi_device", VAAPI_DEVICE]
-    cmd += ["-ss", f"{max(0.0, start):.3f}", "-i", str(source), "-map", "0:v:0"]
+    cmd += playback_input_args(source, start) + ["-map", "0:v:0"]
     cmd += ["-map", f"0:{audio_index}"] if audio_index is not None else ["-an"]
     filters = []
     if quality["width"]:
@@ -2052,7 +2172,7 @@ def codec_encoder_test(backend: str, codec: str, audio: bool = False) -> tuple[b
                    "-movflags", "+frag_keyframe+empty_moov", "-f", "mp4", "pipe:1"]
     else:
         command = transcode_command(backend, Path("codec-test"), None, 0, QUALITY_PROFILES["480p"], codec)
-        before, after = command.index("-ss"), command.index("-map")
+        before, after = command.index("-skip_estimate_duration_from_pts"), command.index("-map")
         command[before:after] = ["-f", "lavfi", "-i", "color=size=320x180:rate=24", "-frames:v", "2"]
     try:
         result = run_media_command(command, capture_output=True, timeout=15)
@@ -2148,7 +2268,7 @@ def transcode(root_index, relpath):
     encoder_label = f"{BACKEND_LABELS[backend]} · {encoder}"
     cmd = transcode_command(backend, target, audio_index, start, quality, video_codec, audio_codec)
     app.logger.info("Starting %s transcode: %s", encoder_label,
-                    source.name if source.suffix.lower() == ".strm" else " ".join(cmd))
+                    source.name if isinstance(source, WebDAVPath) or source.suffix.lower() == ".strm" else " ".join(cmd))
     try:
         proc = media_runtime.popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
     except (OSError, RuntimeError):
@@ -2257,11 +2377,12 @@ def subtitle(root_index, relpath):
     if idx < 0 or not math.isfinite(start) or start < 0:
         abort(400)
 
-    proc = run_media_command([
-        FFMPEG, "-hide_banner", "-loglevel", "error",
-        "-ss", f"{max(0.0, start):.3f}",
-        "-i", str(target), "-map", f"0:{idx}", "-f", "webvtt", "pipe:1"
-    ], capture_output=True, timeout=30)
+    proc = run_media_command(
+        [FFMPEG, "-hide_banner", "-loglevel", "error"]
+        + playback_input_args(target, start)
+        + ["-map", f"0:{idx}", "-f", "webvtt", "pipe:1"],
+        capture_output=True, timeout=30,
+    )
     if proc.returncode:
         abort(415)
     return Response(proc.stdout, mimetype="text/vtt")
@@ -2270,7 +2391,9 @@ def subtitle(root_index, relpath):
 def transcoder_status_payload(force_refresh: bool = False) -> dict[str, Any]:
     status = selected_transcoder(force_refresh=force_refresh)
     streams = stream_tracker.snapshot()
+    service = _nzbdav_service
     return {
+        "nzbdav_ram_cache": service.cache.snapshot() if service and can_manage_settings() else None,
         "transcoder_ok": status["ok"],
         "backend": status["label"],
         "preference": TRANSCODER_PREFERENCE,
@@ -2313,6 +2436,11 @@ def not_found(_):
 @app.errorhandler(403)
 def forbidden(_):
     return render_template("error.html", message="Access outside the configured media roots is not allowed."), 403
+
+
+@app.errorhandler(RemoteError)
+def remote_media_error(error):
+    return render_template("error.html", message=str(error)), 502
 
 
 if __name__ == "__main__":

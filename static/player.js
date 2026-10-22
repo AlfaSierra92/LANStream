@@ -15,10 +15,11 @@ let quality=qualitySelect.value, custom={height:720,bitrate:4000,audio:128};
 let streamIsDirect=false, logicalOffset=0, started=false, dragging=false, forceTranscode=false;
 let controlsTimer=null, controlsHovered=false, playbackId='', lastFrameSample=null;
 let statsTimer=null, statsBusy=false, statsRequest=null;
+let seekTimer=null, pendingSeek=null;
 
 function fmt(sec){sec=Math.max(0,Math.floor(sec||0));const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;return h?`${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${m}:${String(s).padStart(2,'0')}`;}
 function usingDirect(){return quality==='source'||(config.native&&(!config.nativeMime||video.canPlayType(config.nativeMime)!=='')&&quality==='auto'&&videoCodec==='auto'&&audioCodec==='auto'&&!forceTranscode&&(!audioSelect||audioSelect.selectedIndex===0));}
-function logicalTime(){return streamIsDirect?(video.currentTime||0):logicalOffset+(video.currentTime||0);}
+function logicalTime(){return pendingSeek!==null?pendingSeek:streamIsDirect?(video.currentTime||0):logicalOffset+(video.currentTime||0);}
 function audio(){return audioSelect?audioSelect.value:'';}
 function msg(text){message.textContent=text;message.classList.toggle('hidden',!text);}
 function newRequest(){
@@ -40,6 +41,7 @@ function subtitles(start){
  track.src=config.subtitleUrl+'?'+new URLSearchParams({stream:subtitleSelect.value,start});video.appendChild(track);
 }
 function transcode(at,autoplay=true){
+ cancelPendingSeek();
  if(quality==='source'){msg('Transcoding is disabled. Choose Auto to allow conversion.');return;}
  logicalOffset=Math.max(0,totalDuration>0?Math.min(totalDuration,at):at);newRequest();subtitles(logicalOffset);msg('Starting stream…');
  const params=new URLSearchParams({start:logicalOffset,audio:audio(),quality,video_codec:videoCodec,audio_codec:audioCodec,playback_id:playbackId});
@@ -48,6 +50,7 @@ function transcode(at,autoplay=true){
 }
 let metadataSeek=null;
 function start(at=0,autoplay=true){
+ cancelPendingSeek();
  if(metadataSeek){video.removeEventListener('loadedmetadata',metadataSeek);metadataSeek=null;}
  if(quality==='source'){videoCodec='auto';audioCodec='auto';videoCodecSelect.value='auto';if(audioCodecSelect)audioCodecSelect.value='auto';if(audioSelect)audioSelect.selectedIndex=0;forceTranscode=false;}
  streamIsDirect=usingDirect();updateQualityInfo();
@@ -58,7 +61,24 @@ function start(at=0,autoplay=true){
  }else transcode(at,autoplay);
  started=true;
 }
-function go(at){if(totalDuration<=0)return;at=Math.max(0,Math.min(totalDuration,at));if(!started)return start(at);streamIsDirect?video.currentTime=at:transcode(at,!video.paused);}
+function cancelPendingSeek(){if(seekTimer!==null)clearTimeout(seekTimer);seekTimer=null;pendingSeek=null;}
+function go(at){
+ if(totalDuration<=0)return;
+ at=Math.max(0,Math.min(totalDuration,at));cancelPendingSeek();
+ if(!started)return start(at);
+ if(streamIsDirect){video.currentTime=at;return;}
+ const local=at-logicalOffset;
+ // Reuse the current encoder when the browser already has this part. Leave a
+ // small margin at range ends, where a seek could immediately stall again.
+ for(let i=0;i<video.buffered.length;i++){
+  if(local>=video.buffered.start(i)&&local+0.1<video.buffered.end(i)){
+   try{video.currentTime=local;return;}catch(_){}
+  }
+ }
+ // Collapse repeated skip clicks/seek changes before reopening a slow mount.
+ pendingSeek=at;seek.value=at;currentLabel.textContent=fmt(at);
+ seekTimer=setTimeout(()=>{const target=pendingSeek;cancelPendingSeek();transcode(target,!video.paused);},200);
+}
 function switchStream(change){const at=logicalTime(),autoplay=!video.paused;change();started=false;logicalOffset=0;start(at,autoplay);showControls();}
 function fullscreenElement(){return document.fullscreenElement||document.webkitFullscreenElement||null;}
 function isFullscreen(){return fullscreenElement()===playerShell;}
@@ -100,7 +120,7 @@ el('fullscreenTop').onclick=toggleFullscreen;
 qualitySelect.onchange=()=>{customQuality.hidden=qualitySelect.value!=='custom';if(qualitySelect.value!=='custom'){switchStream(()=>{quality=qualitySelect.value;forceTranscode=false;});loadCodecOptions();}};
 el('applyQuality').onclick=()=>{if(!el('customBitrate').reportValidity())return;switchStream(()=>{quality='custom';custom={height:Number(el('customHeight').value),bitrate:Number(el('customBitrate').value),audio:Number(el('customAudio').value)};forceTranscode=false;});};
 if(audioSelect)audioSelect.onchange=()=>switchStream(()=>{});
-if(subtitleSelect)subtitleSelect.onchange=()=>{showControls();if(started)streamIsDirect?subtitles(0):go(logicalTime());};
+if(subtitleSelect)subtitleSelect.onchange=()=>{showControls();if(started)subtitles(streamIsDirect?0:logicalOffset);};
 
 function supportsCodec(codec){return video.canPlayType(`video/mp4; codecs="${codec}"`)!=='';}
 function codecHint(){
@@ -212,5 +232,5 @@ document.addEventListener('keydown',event=>{
 document.addEventListener('fullscreenchange',updateFullscreenState);
 document.addEventListener('webkitfullscreenchange',updateFullscreenState);
 document.addEventListener('visibilitychange',()=>{lastFrameSample=null;if(!document.hidden)refreshStats();});
-window.addEventListener('pagehide',()=>{clearInterval(statsTimer);clearControlsTimer();statsRequest?.abort();});
+window.addEventListener('pagehide',()=>{cancelPendingSeek();clearInterval(statsTimer);clearControlsTimer();statsRequest?.abort();});
 start(0);updateFullscreenState();

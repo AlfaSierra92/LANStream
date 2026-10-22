@@ -18,12 +18,13 @@ const context = {
   videoCodecSelect: el('videoCodecSelect'), audioCodecSelect: el('audioCodecSelect'),
   audioSelect: {selectedIndex: 1}, metadataSeek: null, custom: {}, streamIsDirect: false,
   playbackId: 'test', started: false, URLSearchParams, el,
+  seekTimer: null, pendingSeek: null, setTimeout, clearTimeout,
   newRequest() {}, subtitles() {}, codecHint() {}, msg(text) { this.message = text; },
 };
 // Use an arrow closure so msg works when invoked as a plain script function.
 context.msg = text => { context.message = text; };
 vm.createContext(context);
-for (const name of ['usingDirect', 'updateQualityInfo', 'transcode', 'start']) {
+for (const name of ['usingDirect', 'updateQualityInfo', 'cancelPendingSeek', 'transcode', 'start']) {
   const singleLine = source.match(new RegExp(`^function ${name}\\(.*\\}\\s*$`, 'm'));
   const multiLine = source.match(new RegExp(`^function ${name}\\([\\s\\S]*?^\\}`, 'm'));
   vm.runInContext(singleLine ? singleLine[0] : multiLine[0], context);
@@ -72,3 +73,64 @@ context.qualitySelect.onchange();
 assert.equal(context.codecRefreshes, 1);
 assert.equal(context.customQuality.hidden, true);
 console.log('Original: unmodified media, no fallback or encoder request; Auto: conversion fallback verified.');
+
+// Seeking within the transcoded buffer must not reopen FFmpeg or the mount.
+for (const name of ['logicalTime', 'go']) {
+  const singleLine = source.match(new RegExp(`^function ${name}\\(.*\\}\\s*$`, 'm'));
+  const multiLine = source.match(new RegExp(`^function ${name}\\([\\s\\S]*?^\\}`, 'm'));
+  vm.runInContext(singleLine ? singleLine[0] : multiLine[0], context);
+}
+const timers = new Map();
+let sequence = 0;
+context.setTimeout = callback => { timers.set(++sequence, callback); return sequence; };
+context.clearTimeout = id => timers.delete(id);
+const requests = [];
+context.transcode = (at, autoplay) => requests.push({at, autoplay});
+context.totalDuration = 300;
+context.logicalOffset = 100;
+context.started = true;
+context.streamIsDirect = false;
+context.video.currentTime = 20;
+context.video.paused = false;
+context.video.buffered = {length: 1, start: () => 0, end: () => 60};
+context.seek = {value: 0};
+context.currentLabel = {textContent: ''};
+context.fmt = String;
+context.go(140);
+assert.equal(context.video.currentTime, 40);
+assert.equal(requests.length, 0);
+assert.equal(timers.size, 0);
+context.go(80);
+assert.equal(context.logicalTime(), 80);
+context.go(context.logicalTime() + 30);
+assert.equal(context.video.currentTime, 10);
+assert.equal(timers.size, 0);
+context.go(200);
+context.go(context.logicalTime() + 30);
+assert.equal(timers.size, 1);
+assert.equal(requests.length, 0);
+const flushSeek = () => {const callbacks = [...timers.values()]; timers.clear(); callbacks.forEach(callback => callback());};
+flushSeek();
+assert.deepEqual(requests, [{at: 230, autoplay: true}]);
+assert.equal(context.pendingSeek, null);
+// Paused seeks stay paused; direct playback does not wait for the debounce.
+context.video.paused = true;
+context.go(290);
+flushSeek();
+assert.deepEqual(requests[1], {at: 290, autoplay: false});
+context.streamIsDirect = true;
+context.go(75);
+assert.equal(context.video.currentTime, 75);
+assert.equal(timers.size, 0);
+// Changing subtitles updates tracks on the existing media timeline.
+context.subtitleSelect = {};
+context.showControls = () => {};
+const subtitleStarts = [];
+context.subtitles = at => subtitleStarts.push(at);
+vm.runInContext(source.match(/^if\(subtitleSelect\)subtitleSelect.onchange=.*$/m)[0], context);
+context.subtitleSelect.onchange();
+context.streamIsDirect = false;
+context.subtitleSelect.onchange();
+assert.deepEqual(subtitleStarts, [0, 100]);
+assert.equal(requests.length, 2);
+console.log('Buffered seeks reuse playback; rapid remote seeks coalesce; pause and subtitle timeline preserved.');

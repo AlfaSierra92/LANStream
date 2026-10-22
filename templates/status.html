@@ -10,6 +10,7 @@
 
 </div>
 
+<p id="ramCacheStatus" hidden></p>
 <div class="status-actions">
   <button id="retestButton" type="button">Retest transcoder backends</button>
 </div>
@@ -84,6 +85,10 @@ async function refreshStatus(force = false) {
   document.getElementById("backend").textContent = data.backend || "Unavailable";
   document.getElementById("streamCount").textContent = data.active_stream_count;
   document.getElementById("preference").textContent = data.preference || "auto";
+  const ram = data.nzbdav_ram_cache;
+  const ramStatus = document.getElementById("ramCacheStatus");
+  ramStatus.hidden = !ram;
+  if (ram) ramStatus.textContent = `NZBDAV RAM: ${formatBytes(ram.stored_bytes)} cached + ${formatBytes(ram.reserved_bytes)} in flight / ${formatBytes(ram.capacity_bytes)} · ${ram.hits} hits · ${ram.misses} misses · ${ram.evictions} evicted blocks`;
 
   const tbody = document.querySelector("#streamsTable tbody");
   const table = document.getElementById("streamsTable");

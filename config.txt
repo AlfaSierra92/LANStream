@@ -1,4 +1,12 @@
 # One absolute media path per line.
+# Integrated NZBDAV: leave URL blank to disable. No rclone or disk media cache.
+# Use the WebDAV username/password, not the rclone RC credentials.
+nzbdav_url=
+nzbdav_user=
+nzbdav_password=
+nzbdav_root=content
+nzbdav_ram_cache_mb=256
+# RAM limit is per LANStream worker; default deployment has one worker.
 # All paths must be beneath the Media mount root configured in LEC.
 #
 # Example:
