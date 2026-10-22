@@ -16,6 +16,7 @@ let streamIsDirect=false, logicalOffset=0, started=false, dragging=false, forceT
 let controlsTimer=null, controlsHovered=false, playbackId='', lastFrameSample=null;
 let statsTimer=null, statsBusy=false, statsRequest=null;
 let seekTimer=null, pendingSeek=null;
+let playbackBlocked=false;
 const subtitleWindows=new WindowedSubtitles(video,config.subtitleUrl,el('subtitleStatus'),totalDuration);
 
 function fmt(sec){sec=Math.max(0,Math.floor(sec||0));const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;return h?`${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${m}:${String(s).padStart(2,'0')}`;}
@@ -23,7 +24,19 @@ function usingDirect(){return quality==='source'||(config.native&&(!config.nativ
 function logicalTime(){return pendingSeek!==null?pendingSeek:streamIsDirect?(video.currentTime||0):logicalOffset+(video.currentTime||0);}
 function audio(){return audioSelect?audioSelect.value:'';}
 function msg(text){message.textContent=text;message.classList.toggle('hidden',!text);}
+function requestPlay(){
+ const token=playbackId;
+ playbackBlocked=false;
+ const result=video.play();
+ if(result)result.catch(error=>{
+  if(token!==playbackId||error.name==='AbortError')return;
+  if(error.name==='NotAllowedError'){
+   playbackBlocked=true;msg('Tap ▶ to start playback.');showControls();
+  }else if(!video.error){msg('Unable to start playback. Tap ▶ to retry.');showControls();}
+ });
+}
 function newRequest(){
+ playbackBlocked=false;
  playbackId=Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');
  lastFrameSample=null;lastTechnical=null;
  for(const id of ['statEncoder','statBandwidth','statTransferred'])el(id).textContent='—';
@@ -46,7 +59,7 @@ function transcode(at,autoplay=true){
  logicalOffset=Math.max(0,totalDuration>0?Math.min(totalDuration,at):at);newRequest();subtitles(logicalOffset);msg('Starting stream…');
  const params=new URLSearchParams({start:logicalOffset,audio:audio(),quality,video_codec:quality==='audio_only'?'auto':videoCodec,audio_codec:audioCodec,playback_id:playbackId});
  if(quality==='custom'){params.set('height',custom.height);params.set('bitrate',custom.bitrate);params.set('audio_bitrate',custom.audio);}
- video.src=config.transcodeUrl+'?'+params;video.load();if(autoplay)video.play().catch(()=>{});
+ video.src=config.transcodeUrl+'?'+params;video.load();if(autoplay)requestPlay();
 }
 let metadataSeek=null;
 function start(at=0,autoplay=true){
@@ -56,8 +69,10 @@ function start(at=0,autoplay=true){
  streamIsDirect=usingDirect();updateQualityInfo();
  if(streamIsDirect){
   newRequest();subtitles(0,at);video.src=config.nativeUrl+'?'+new URLSearchParams({playback_id:playbackId});video.load();
-  metadataSeek=()=>{metadataSeek=null;try{video.currentTime=at;}catch(_){}if(autoplay)video.play().catch(()=>{});};
+  metadataSeek=()=>{metadataSeek=null;if(at>0)try{video.currentTime=at;}catch(_){}};
   if(video.readyState>=1)metadataSeek();else video.addEventListener('loadedmetadata',metadataSeek,{once:true});
+  // Keep play() in the click handler's call stack: iOS requires a user gesture.
+  if(autoplay)requestPlay();
  }else transcode(at,autoplay);
  started=true;
 }
@@ -102,13 +117,13 @@ el('optionsClose').onclick=()=>closeOptions(true);
 el('infoToggle').onclick=()=>{if(!stats.hidden)return closeStats();closeOptions();stats.hidden=false;el('infoToggle').setAttribute('aria-expanded','true');showControls();el('infoClose').focus();refreshStats();statsTimer=setInterval(refreshStats,1000);};
 el('infoClose').onclick=()=>closeStats(true);
 
-togglePlay.onclick=()=>{showControls();if(!started||video.ended)return start(0);video.paused?video.play().catch(()=>{}):video.pause();};
+togglePlay.onclick=()=>{showControls();if(!started||video.ended)return start(0);video.paused?requestPlay():video.pause();};
 el('back30').onclick=()=>{showControls();go(logicalTime()-30);};
 el('forward30').onclick=()=>{showControls();go(logicalTime()+30);};
 video.addEventListener('playing',()=>{msg('');togglePlay.textContent='Ⅱ';togglePlay.setAttribute('aria-label','Pause');scheduleControlsHide();});
-video.addEventListener('loadeddata',()=>{if(video.paused)msg('');});
+video.addEventListener('loadeddata',()=>{if(video.paused&&!playbackBlocked)msg('');});
 video.addEventListener('pause',()=>{togglePlay.textContent='▶';togglePlay.setAttribute('aria-label','Play');showControls();clearControlsTimer();});
-video.addEventListener('waiting',()=>{if(started)msg('Buffering…');});
+video.addEventListener('waiting',()=>{if(started&&!playbackBlocked&&!video.paused)msg('Buffering…');});
 async function reportPlaybackFailure(){
  const token=playbackId;
  msg('Playback failed. Reading the server error…');showControls();

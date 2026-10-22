@@ -24,7 +24,7 @@ const context = {
 // Use an arrow closure so msg works when invoked as a plain script function.
 context.msg = text => { context.message = text; };
 vm.createContext(context);
-for (const name of ['usingDirect', 'updateQualityInfo', 'cancelPendingSeek', 'transcode', 'start']) {
+for (const name of ['usingDirect', 'updateQualityInfo', 'cancelPendingSeek', 'requestPlay', 'transcode', 'start']) {
   const singleLine = source.match(new RegExp(`^function ${name}\\(.*\\}\\s*$`, 'm'));
   const multiLine = source.match(new RegExp(`^function ${name}\\([\\s\\S]*?^\\}`, 'm'));
   vm.runInContext(singleLine ? singleLine[0] : multiLine[0], context);
@@ -160,6 +160,35 @@ console.log('Buffered seeks reuse playback; rapid remote seeks coalesce; pause a
 // without reopening the movie or turning off tone mapping.
 vm.runInContext(source.match(/^async function reportPlaybackFailure\([\s\S]*?^\}/m)[0], context);
 (async()=>{
+ // Safari must receive play() during the user's click, before metadata exists.
+ context.quality='source';context.video.readyState=0;context.video.paused=true;
+ context.video.error=null;context.playbackBlocked=false;
+ const mediaEvents={};let playCalls=0;
+ context.video.addEventListener=(name,callback)=>{mediaEvents[name]=callback;};
+ context.video.play=()=>{playCalls++;return Promise.reject({name:'NotAllowedError'});};
+ context.start(0);
+ assert.equal(playCalls,1);
+ await Promise.resolve();
+ assert.equal(context.playbackBlocked,true);
+ assert.match(context.message,/Tap ▶/);
+ for(const name of ['waiting','loadeddata']){
+  vm.runInContext(source.match(new RegExp(`^video.addEventListener\\('${name}'.*$`,'m'))[0],context);
+  mediaEvents[name]();
+  assert.match(context.message,/Tap ▶/);
+ }
+ context.video.currentTime=7;
+ mediaEvents.loadedmetadata();
+ assert.equal(playCalls,1);
+ assert.equal(context.video.currentTime,7); // No redundant seek to zero.
+ context.video.play=()=>{playCalls++;return Promise.resolve();};
+ context.requestPlay();
+ assert.equal(playCalls,2);assert.equal(context.playbackBlocked,false);
+ // Ignore an autoplay rejection belonging to an obsolete media request.
+ context.video.play=()=>Promise.reject({name:'NotAllowedError'});
+ context.requestPlay();context.playbackId='replacement';context.message='new playback';
+ await Promise.resolve();
+ assert.equal(context.message,'new playback');
+ console.log('Safari: play starts before metadata; blocked autoplay prompts for a tap; stale failures ignored.');
  context.playbackId='hdr-error';context.streamIsDirect=false;context.video.error={code:3};
  context.config.statsUrl='/api/playback-info/0/movie.mkv';context.showControls=()=>{};
  context.put=(id,value)=>{el(id).textContent=value;};
