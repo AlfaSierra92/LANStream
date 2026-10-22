@@ -1067,7 +1067,7 @@ def available_transcoder_tests() -> list[tuple[str, str, tuple[bool, str]]]:
                 run_encoder_test(
                     "h264_vaapi",
                     extra_before_input=["-vaapi_device", VAAPI_DEVICE],
-                    video_filter="format=nv12,hwupload",
+                    video_filter="format=nv12,hwupload,scale_vaapi=format=nv12",
                 ),
             ))
         tests.append(("nvenc", "NVIDIA NVENC", run_encoder_test("h264_nvenc", video_filter="format=nv12")))
@@ -2123,16 +2123,26 @@ def transcode_command(
     limited = bool(quality["video_kbps"])
     cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-nostdin"]
     if backend == "vaapi":
-        cmd += ["-vaapi_device", VAAPI_DEVICE]
+        # Share one device between decoder, VPP and encoder. Keep decoded
+        # surfaces on the GPU; software frames must never enter this graph.
+        cmd += ["-init_hw_device", f"vaapi=lanstream:{VAAPI_DEVICE}",
+                "-filter_hw_device", "lanstream",
+                "-hwaccel", "vaapi", "-hwaccel_device", "lanstream",
+                "-hwaccel_output_format", "vaapi"]
     cmd += playback_input_args(source, start) + ["-map", "0:v:0"]
     cmd += ["-map", f"0:{audio_index}"] if audio_index is not None else ["-an"]
     filters = []
+    scale = ""
     if quality["width"]:
         # Bound both dimensions, preserve aspect ratio and never enlarge the source.
-        filters.append(f"scale=w='min(iw,{quality['width']})':h='min(ih,{quality['height']})':force_original_aspect_ratio=decrease:force_divisible_by=2")
-    filters.append("format=yuv420p" if backend == "software" else "format=nv12")
+        scale = f"w='min(iw,{quality['width']})':h='min(ih,{quality['height']})':force_original_aspect_ratio=decrease:force_divisible_by=2"
     if backend == "vaapi":
-        filters.append("hwupload")
+        # VPP also converts Main 10 / P010 input to the encoder's NV12 format.
+        filters.append("scale_vaapi=" + (scale + ":" if scale else "") + "format=nv12")
+    else:
+        if scale:
+            filters.append("scale=" + scale)
+        filters.append("format=yuv420p" if backend == "software" else "format=nv12")
     cmd += ["-vf", ",".join(filters)]
     encoder = VIDEO_ENCODERS[backend][video_codec]
     options = {
@@ -2173,8 +2183,14 @@ def codec_encoder_test(backend: str, codec: str, audio: bool = False) -> tuple[b
                    "-movflags", "+frag_keyframe+empty_moov", "-f", "mp4", "pipe:1"]
     else:
         command = transcode_command(backend, Path("codec-test"), None, 0, QUALITY_PROFILES["480p"], codec)
-        before, after = command.index("-skip_estimate_duration_from_pts"), command.index("-map")
+        before = command.index("-hwaccel" if backend == "vaapi" else "-skip_estimate_duration_from_pts")
+        after = command.index("-map")
         command[before:after] = ["-f", "lavfi", "-i", "color=size=320x180:rate=24", "-frames:v", "2"]
+        if backend == "vaapi":
+            # Lavfi produces raw CPU frames, not a compressed video to decode.
+            # Only the synthetic encoder capability test needs an upload.
+            vf = command.index("-vf") + 1
+            command[vf] = "format=nv12,hwupload," + command[vf]
     try:
         result = run_media_command(command, capture_output=True, timeout=15)
         return result.returncode == 0, "" if result.returncode == 0 else result.stderr.decode("utf-8", "replace")[-1500:]
@@ -2194,6 +2210,8 @@ def codec_transcoder(transcoder: dict, codec: str) -> tuple[str | None, str]:
     ok, detail = codec_encoder_test(preferred, codec)
     if ok:
         return preferred, ""
+    if preferred == "vaapi":
+        return None, f"{VIDEO_CODECS[codec]['label']} is unavailable on VAAPI; software fallback is disabled. {detail}"
     if preferred != "software":
         ok, detail = codec_encoder_test("software", codec)
         if ok:

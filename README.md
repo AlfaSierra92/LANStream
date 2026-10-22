@@ -197,6 +197,21 @@ The active backend and capability-test results can be viewed at:
 <your LANStream address>/transcoder-status
 ```
 
+VAAPI transcoding uses hardware video decoding, GPU pixel-format conversion and
+resizing (`scale_vaapi`), and hardware encoding. Decoded frames stay on the same
+VAAPI device throughout; playback does not use CPU `scale`/`format`, `hwupload`,
+or `hwdownload`. HEVC Main 10 input requires the matching VLD profile in `vainfo`.
+The selected input codec/profile must be supported by the GPU: an unsupported
+input fails instead of switching to a CPU video pipeline. Audio conversion,
+demuxing, network reads and MP4 muxing still use the CPU. Original/direct playback
+bypasses transcoding entirely. This change does not add HDR-to-SDR tone mapping.
+
+The startup/codec capability checks use a synthetic raw video source, so those
+short tests deliberately upload CPU-generated frames. They check GPU encoding
+and processing, not decoding support for every possible source profile. A real
+VAAPI integration test (H.264 and HEVC Main 10 input) runs on Linux when the render
+device is available: `python -m unittest discover -s tests -p test_vaapi.py -v`.
+
 
 ### Settings UI
 
@@ -294,7 +309,8 @@ The menu checks the server's encoders and browser MP4 support when opened. Unava
 or browser-unsupported codecs are disabled. Unsupported video/audio combinations are
 rejected before switching. Detection is cached; use the Activity page's retest button
 after changing encoders or hardware. The selected GPU backend is used when its codec
-probe succeeds; otherwise LANStream tests the software encoder. The menu labels software
+probe succeeds. VAAPI disables unavailable output codecs rather than falling back
+to software; other backends can test the software encoder. The menu labels software
 encoding and Playback info shows the encoder actually used and any fallback.
 
 Software encoders are libx264 (H.264), libx265 (HEVC), and libsvtav1 (AV1); audio uses

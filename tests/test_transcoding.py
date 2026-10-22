@@ -31,7 +31,8 @@ class QualityTests(unittest.TestCase):
                     self.assertEqual(command[command.index(flag) + 1], value)
                 video_filter = command[command.index('-vf') + 1]
                 self.assertIn('min(iw,1280)', video_filter)
-                self.assertEqual('hwupload' in video_filter, backend == 'vaapi')
+                self.assertEqual('scale_vaapi=' in video_filter, backend == 'vaapi')
+                self.assertNotIn('hwupload', video_filter)
                 for conflicting_flag in ['-crf', '-cq', '-qp', '-global_quality', '-qp_i']:
                     self.assertNotIn(conflicting_flag, command)
 
