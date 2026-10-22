@@ -2747,8 +2747,12 @@ def remote_media_error(error):
 
 
 if __name__ == "__main__":
+    from waitress import serve
+
     media_runtime.install_signal_handlers()
     try:
-        app.run(host="0.0.0.0", port=SERVER_PORT, threaded=True)
+        serve(app, host="0.0.0.0", port=SERVER_PORT, threads=8)
+    except KeyboardInterrupt:
+        pass
     finally:
         media_runtime.shutdown()

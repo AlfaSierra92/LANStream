@@ -172,18 +172,29 @@ HEVC Main 10 decode test or a vainfo VLD entry does not prove tone-mapping suppo
 
 ## Playback and operational limits
 
-Transcoding produces fragmented MP4 directly to the HTTP response, without a
-persistent converted movie. With VAAPI, video stays on the GPU. Audio, networking
-and container handling still use CPU. QSV/NVENC/AMF currently accelerate encoding;
-their decoding and video filters, including tone mapping, remain software.
+Video conversion and audio-only conversion produce fragmented MP4 directly to
+the HTTP response, without saving a converted movie. In audio-only mode, video
+packets are copied: the server does not decode, tone-map or re-encode them. The
+browser must support the original video and HDR format.
+
+When re-encoding video, the VAAPI pipeline keeps video decoding, supported
+processing and encoding on the GPU. Audio conversion, networking and container
+handling still use CPU. In LANStream's current implementation, QSV/NVENC/AMF
+accelerate encoding only; their decoding and video filters, including tone
+mapping, run on CPU. This describes the implemented paths, not the full
+capabilities of those hardware APIs.
 
 Startup and seeking depend on the source, network, GPU, driver and browser.
-There is no fixed latency guarantee. Increasing RAM cannot repair insufficient
-upstream throughput.
+There is no fixed latency guarantee. A larger RAM cache can reduce repeated
+reads and absorb short stalls, but cannot compensate for source throughput that
+remains below the rate required for continuous playback.
 
-LANStream is intended for a trusted LAN. Passwords do not provide TLS or complete
-user isolation. Activity exposes server-wide stream information to authenticated
-users; configuration passwords are stored in plain text. The application does not
+LANStream is intended for a trusted LAN. The supplied server runs HTTP; HTTPS
+requires a separate TLS deployment, such as a reverse proxy. Access passwords
+do not encrypt stored credentials or provide complete user isolation. Activity
+exposes server-wide stream information to users with access to it, including
+restricted profiles; in passwordless mode it is accessible without login.
+Configuration passwords are stored in plain text. The application does not
 include automatic cataloging, persistent watch history, recommendations or a
 download manager.
 
