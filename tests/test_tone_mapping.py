@@ -142,6 +142,48 @@ class ToneMappingTests(unittest.TestCase):
         self.assertIn('tonemapping=mobius', hdr[hdr.index('-vf') + 1])
         self.assertNotIn('lanstream_vk', ' '.join(sdr))
 
+    def test_opencl_curves_bypass_vulkan_and_share_gpu_surfaces(self):
+        for algorithm in ('mobius', 'reinhard', 'hable'):
+            mode = 'opencl-' + algorithm
+            command = server.transcode_command('vaapi', Path('hdr.mkv'), 1, 0,
+                                               source_video=HDR10_VIDEO, tone_mapper=mode)
+            graph = command[command.index('-vf') + 1]
+            self.assertIn('opencl=lanstream_cl@lanstream', command)
+            self.assertEqual(command[command.index('-filter_hw_device') + 1], 'lanstream_cl')
+            self.assertEqual(command[command.index('-hwaccel') + 1], 'vaapi')
+            self.assertLess(graph.index('scale_vaapi=format=p010'), graph.index('derive_device=opencl'))
+            self.assertLess(graph.index('derive_device=opencl'), graph.index('tonemap_opencl='))
+            self.assertLess(graph.index('tonemap_opencl='), graph.index('derive_device=vaapi:reverse=1'))
+            self.assertIn('tonemap=' + algorithm, graph)
+            self.assertIn('-noauto_conversion_filters', command)
+            self.assertIn('-af', command)
+            for unwanted in ('vulkan', 'libplacebo', 'hwupload', 'hwdownload', 'zscale'):
+                self.assertNotIn(unwanted, ' '.join(command))
+            plan = tone_mapping_plan({**HDR10_VIDEO, 'color_transfer': 'arib-std-b67'}, 'vaapi', mode)
+            self.assertTrue(plan.opencl)
+            self.assertIn('HLG', plan.label)
+        for metadata in ({'color_primaries': 'smpte432'}, {'color_space': 'bt2020c'}):
+            with self.assertRaises(ToneMappingError):
+                tone_mapping_plan({**HDR10_VIDEO, **metadata}, 'vaapi', 'opencl-mobius')
+
+    def test_opencl_capability_check_uses_requested_curve_and_reports_missing_runtime(self):
+        filters = tone_mapping_plan(HDR10_VIDEO, 'vaapi', 'opencl-mobius').required
+        with patch.object(server, 'ffmpeg_filters', return_value=filters), patch.object(
+                server, 'run_media_command', return_value=Mock(returncode=1, stdout=b'', stderr=b'Failed to get number of OpenCL platforms: -1001')) as run:
+            supported, detail = server.tone_mapping_test('vaapi', 'opencl-mobius')
+        self.assertFalse(supported)
+        self.assertIn('OpenCL platforms', detail)
+        command = run.call_args.args[0]
+        self.assertIn('tonemap_opencl=tonemap=mobius', command[command.index('-vf') + 1])
+        self.assertIn('opencl=lanstream_cl@lanstream', command)
+        self.assertEqual(run.call_args.kwargs['input'], HDR10_PROBE)
+
+    @unittest.skipUnless(Path(server.VAAPI_DEVICE).exists(), 'Linux VAAPI/OpenCL GPU required')
+    def test_real_opencl_tone_mapping_outputs_sdr(self):
+        supported, detail = server.tone_mapping_test('vaapi', 'opencl-mobius')
+        self.assertTrue(supported, detail)
+        self.check_real_output('vaapi', tone_mapper='opencl-mobius')
+
     @unittest.skipUnless(Path('/dev/dri/renderD128').exists(), 'Linux VAAPI/Vulkan GPU required')
     def test_real_libplacebo_pipeline(self):
         supported, detail = server.tone_mapping_test('vaapi', 'libplacebo-bt2390')
@@ -334,9 +376,9 @@ class ToneMappingTests(unittest.TestCase):
                                            '-f', 'hevc', 'pipe:1'], input=HDR10_PROBE, timeout=10)
         self.check_real_output('software', source_video=hlg, fixture=fixture)
 
-    def check_real_output(self, backend, video_codec='h264', source_video=None, fixture=HDR10_PROBE):
+    def check_real_output(self, backend, video_codec='h264', source_video=None, fixture=HDR10_PROBE, tone_mapper=None):
         command = server.transcode_command(backend, Path('fixture'), None, 0, video_codec=video_codec,
-                                           source_video=source_video or HDR10_VIDEO)
+                                           source_video=source_video or HDR10_VIDEO, tone_mapper=tone_mapper)
         before, after = command.index('-skip_estimate_duration_from_pts'), command.index('-map')
         command[before:after] = ['-f', 'hevc', '-i', 'pipe:0', '-frames:v', '1']
         result = subprocess.run(command, input=fixture, capture_output=True, timeout=30)

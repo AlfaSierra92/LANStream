@@ -2147,7 +2147,12 @@ def transcode_command(
             # Derive Vulkan from the selected VAAPI adapter, never a software
             # Vulkan renderer or an unrelated default GPU.
             cmd += ['-init_hw_device', 'vulkan=lanstream_vk@lanstream']
-        cmd += ["-filter_hw_device", "lanstream_vk" if mapping.vulkan else "lanstream",
+        if mapping.opencl:
+            # Require VAAPI/OpenCL sharing on this exact GPU. No CPU OpenCL
+            # device selection or upload/download fallback is allowed.
+            cmd += ['-init_hw_device', 'opencl=lanstream_cl@lanstream']
+        filter_device = 'lanstream_vk' if mapping.vulkan else 'lanstream_cl' if mapping.opencl else 'lanstream'
+        cmd += ["-filter_hw_device", filter_device,
                 "-hwaccel", "vaapi", "-hwaccel_device", "lanstream",
                 "-hwaccel_output_format", "vaapi"]
     cmd += playback_input_args(source, start) + ["-map", "0:v:0"]
@@ -2230,7 +2235,7 @@ def tone_mapping_test(backend: str, tone_mapper: str = 'vaapi') -> tuple[bool, s
         if missing:
             return False, 'FFmpeg is missing tone-mapping filters: ' + ', '.join(sorted(missing))
         command = transcode_command(backend, Path('hdr-test'), None, 0, source_video=HDR10_VIDEO, tone_mapper=tone_mapper)
-        if plan.vulkan:
+        if plan.vulkan or plan.opencl:
             # Device/library initialization failures may return EINVAL without
             # an error-level explanation. Keep version/extension context for
             # this small, cached RAM-only test; movie playback stays quiet.

@@ -6,6 +6,7 @@ master_password=
 transcoder=auto
 default_quality=auto
 # Optional GPU curves: libplacebo-bt2390, libplacebo-mobius, libplacebo-reinhard.
+# Or OpenCL (requires GPU runtime and VAAPI sharing): opencl-mobius, opencl-reinhard, opencl-hable.
 tone_mapping=vaapi
 
 /media/Movies

@@ -13,6 +13,7 @@ class ToneMappingPlan:
     filters: tuple[str, ...] = ()
     required: frozenset[str] = frozenset()
     vulkan: bool = False
+    opencl: bool = False
 
     @property
     def active(self):
@@ -30,7 +31,9 @@ SDR_FRAME_PROPERTIES = 'setparams=range=limited:color_primaries=bt709:color_trc=
 
 
 TONE_MAPPING_MODES = {'vaapi': None, 'libplacebo-bt2390': 'bt.2390',
-                      'libplacebo-mobius': 'mobius', 'libplacebo-reinhard': 'reinhard'}
+                      'libplacebo-mobius': 'mobius', 'libplacebo-reinhard': 'reinhard',
+                      'opencl-mobius': 'mobius', 'opencl-reinhard': 'reinhard',
+                      'opencl-hable': 'hable'}
 
 
 def tone_mapping_plan(video, backend, mode='vaapi'):
@@ -64,8 +67,27 @@ def tone_mapping_plan(video, backend, mode='vaapi'):
         raise ToneMappingError('Unsupported HDR color primaries or matrix; refusing an incorrect SDR conversion.')
     if backend == 'vaapi':
         if mode not in TONE_MAPPING_MODES:
-            raise ToneMappingError('Invalid tone_mapping setting. Use vaapi, libplacebo-bt2390, libplacebo-mobius or libplacebo-reinhard.')
+            raise ToneMappingError('Invalid tone_mapping setting. Choose: ' + ', '.join(TONE_MAPPING_MODES))
         algorithm = TONE_MAPPING_MODES[mode]
+        if mode.startswith('opencl-'):
+            # FFmpeg's OpenCL kernel asserts these input gamuts/matrices;
+            # reject unsupported metadata rather than crashing the subprocess.
+            if primaries not in {'bt2020', 'bt709'} or matrix not in {'bt2020nc', 'bt709'}:
+                raise ToneMappingError('OpenCL tone mapping requires BT.2020 non-constant-luminance or BT.709 input. Use libplacebo for this gamut/matrix.')
+            return ToneMappingPlan(
+                f'{source} → SDR BT.709 · OpenCL {algorithm}',
+                (f'setparams=color_primaries={primaries}:color_trc={transfer}:colorspace={matrix}',
+                 # The OpenCL kernel accepts P010 only. Convert other decoded
+                 # hardware formats on VAAPI before sharing the surfaces.
+                 'scale_vaapi=format=p010',
+                 'hwmap=derive_device=opencl', 'format=opencl',
+                 f'tonemap_opencl=tonemap={algorithm}:format=nv12:p=bt709:t=bt709:m=bt709:r=tv',
+                 # Allocate encoder-compatible VAAPI surfaces and expose them
+                 # to OpenCL for writing; do not unmap the original P010 input.
+                 'hwmap=derive_device=vaapi:reverse=1', 'format=vaapi', SDR_FRAME_PROPERTIES),
+                frozenset({'setparams', 'hwmap', 'format', 'tonemap_opencl', 'scale_vaapi', 'sidedata'}),
+                opencl=True,
+            )
         if algorithm:
             return ToneMappingPlan(
                 f'{source} → SDR BT.709 · libplacebo {algorithm} (Vulkan)',

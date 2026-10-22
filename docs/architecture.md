@@ -158,7 +158,7 @@ tone_mapping_plan is based on probe metadata, never the filename or bit depth al
 | --- | --- |
 | SDR/10-bit SDR | No HDR conversion filters or forced BT.709 tags. |
 | PQ/smpte2084 | HDR10-style conversion to SDR. |
-| HLG/arib-std-b67 | CPU or optional libplacebo path; rejected by the default VAAPI mapper. |
+| HLG/arib-std-b67 | CPU, libplacebo or OpenCL path; rejected by the default VAAPI mapper. |
 | Dolby Vision Profile 7 / compatible Profile 8 | Uses an ordinary HDR10/HLG base layer where supported. |
 | Unsupported proprietary Dolby Vision profiles | Rejected rather than treated as ordinary PQ. |
 
@@ -174,6 +174,12 @@ maps back to VAAPI, then scales/encodes. No hwdownload or software video filter
 is inserted. Dolby Vision application is disabled so these modes consistently
 use the already classified HDR10/HLG base layer. The cached fixture encode tests
 both hardware mappings and the encoder, keyed by backend and mapping mode.
+OpenCL alternatives derive an OpenCL device from VAAPI. The graph first converts
+decoded surfaces to P010 using scale_vaapi (required by the OpenCL kernel),
+maps to OpenCL, applies tonemap_opencl with explicit BT.709/range, and uses
+hwmap=derive_device=vaapi:reverse=1 to allocate VAAPI-compatible output surfaces
+mapped back to OpenCL for writing. The remaining VAAPI scaling/encoder pipeline
+is shared. OpenCL input gamut/matrix restrictions are validated before launch.
 Immediately after tone mapping, a metadata-only setparams filter declares the SDR
 matrix, transfer, primaries and range to FFmpeg's graph negotiation. This prevents
 FFmpeg 8.1 from propagating the input BT.2020 matrix to the encoder and inserting

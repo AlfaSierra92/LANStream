@@ -200,6 +200,19 @@ linked against libplacebo API 365 or newer. Installing a newer runtime library
 alone may not change the API used to compile FFmpeg. Do not remove the guard.
 See the [FFmpeg 9 source](https://github.com/FFmpeg/FFmpeg/blob/n9.0.2/libavfilter/vf_libplacebo.c).
 
+To avoid this Vulkan/libplacebo dependency, update app.py and tone_mapping.py
+together and use tone_mapping=opencl-mobius (alternatives: opencl-reinhard,
+opencl-hable). The actual GPU/OpenCL/VAAPI pipeline is checked before playback.
+This needs the Intel GPU OpenCL runtime with VAAPI sharing support; FFmpeg's
+tonemap_opencl build flag alone does not install the runtime. "No matching
+devices", OpenCL platform error -1001, or failed VAAPI/OpenCL derivation indicate
+runtime/device-sharing setup issues. CPU OpenCL and software video fallbacks
+are not used. Test from the application's actual environment/container:
+
+```bash
+python -c "import app; print(app.tone_mapping_test('vaapi', 'opencl-mobius'))"
+```
+
 Run the exact synthetic test from the project folder using the server's Python
 environment, and share its sanitized diagnostic if the error persists:
 

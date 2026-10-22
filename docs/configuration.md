@@ -32,7 +32,7 @@ Unknown settings are not automatically implemented merely because they are prese
 | master_password | empty | Shared password. |
 | transcoder | auto | Preferred backend: auto, vaapi, qsv, nvenc, amf or software. |
 | default_quality | auto | Initial quality for newly opened players. |
-| tone_mapping | vaapi | VAAPI HDR conversion: vaapi, libplacebo-bt2390, libplacebo-mobius or libplacebo-reinhard. |
+| tone_mapping | vaapi | VAAPI HDR conversion: vaapi; libplacebo-bt2390, libplacebo-mobius, libplacebo-reinhard; opencl-mobius, opencl-reinhard, opencl-hable. |
 | nzbdav_url | empty | HTTP/HTTPS WebDAV endpoint; empty disables the integration. |
 | nzbdav_user | empty | WebDAV username; empty means no Basic Auth header. |
 | nzbdav_password | empty | WebDAV password. |
@@ -100,6 +100,22 @@ Other choices are libplacebo-mobius and libplacebo-reinhard. These modes also
 accept HLG, use Vulkan for tone mapping and VAAPI for decoding/scaling/encoding.
 Vulkan is derived from the selected VAAPI adapter. FFmpeg must include libplacebo,
 hwmap and Vulkan/VAAPI interoperability; a filter listing alone is insufficient.
+
+An alternative that avoids Vulkan/libplacebo is:
+
+```ini
+tone_mapping=opencl-mobius
+```
+
+Other OpenCL choices are opencl-reinhard and opencl-hable. These modes require
+tonemap_opencl plus a GPU OpenCL runtime supporting VAAPI surface sharing on the
+selected adapter (on Intel, the appropriate Intel compute runtime). VAAPI
+decodes, converts surfaces to P010, and shares them with OpenCL for PQ/HLG tone
+mapping. Reverse mapping allocates VAAPI-compatible output surfaces for GPU
+scaling and encoding. No CPU video processing or disk video cache is introduced.
+Only BT.2020 non-constant-luminance or BT.709 input gamuts/matrices are supported
+by this OpenCL kernel. Unsupported combinations fail before encoding.
+
 There is no automatic CPU or VAAPI tone-mapper fallback on failure. To restore
 the original curve, set tone_mapping=vaapi. Settings preserves this file-only key.
 Restart after editing the file and reopen playback. Compare the same scene;
@@ -113,12 +129,13 @@ Missing filters or a failed test produce HTTP 503 before the stream starts.
 Unsupported input color/Dolby Vision combinations produce HTTP 415.
 
 Dolby Vision Profile 7 and Profile 8 with an HDR10-compatible base layer can use
-that base layer. Profile 8 HLG-compatible input can use libplacebo or the CPU path.
+that base layer. Profile 8 HLG-compatible input can use libplacebo, OpenCL or the CPU path.
 Profile 5 and other unsupported proprietary combinations are rejected.
 This is not full Dolby Vision processing.
 
 Original mode is the way to deliver HDR unchanged to a compatible client.
-There is no separate HDR-preserving transcode mode or user-selectable tone curve.
+There is no separate HDR-preserving transcode mode. Curve selection is a global
+configuration setting rather than a per-player control.
 
 ## Libraries without profile sections
 

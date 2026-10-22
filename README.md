@@ -121,6 +121,7 @@ Transcoding automatically converts recognized HDR input to SDR BT.709:
 
 - **VAAPI:** HDR10/PQ uses tonemap_vaapi before GPU resizing and encoding.
   Optional libplacebo/Vulkan modes offer BT.2390, Mobius and Reinhard curves;
+  OpenCL offers Mobius, Reinhard and Hable without requiring libplacebo/Vulkan;
   see [configuration](docs/configuration.md#tone-mapping).
 - **Other backends:** PQ/HLG uses CPU zscale and Hable tone mapping; FFmpeg must
   include zscale/libzimg and tonemap.
@@ -132,7 +133,7 @@ Transcoding automatically converts recognized HDR input to SDR BT.709:
 SDR and 10-bit SDR sources are not tone-mapped. Playback info shows the selected
 tone-mapping path. A cached, in-memory HDR test checks the required pipeline before
 an HDR stream starts. VAAPI never silently downloads frames for CPU tone mapping.
-HLG requires libplacebo when using VAAPI decoding/encoding; the default mapper rejects it.
+HLG requires libplacebo or OpenCL when using VAAPI decoding/encoding; the default mapper rejects it.
 
 HDR processing support depends on the driver as well as FFmpeg. A successful
 HEVC Main 10 decode test or a vainfo VLD entry does not prove tone-mapping support.
