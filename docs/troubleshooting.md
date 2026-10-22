@@ -185,6 +185,30 @@ libplacebo filter. A failed capability check stops playback with its error;
 tone_mapping=vaapi restores the original mapper. Do not change color tags to
 compensate for brightness: tags describe a conversion, they do not perform it.
 
+If libplacebo fails with only "Error initializing filters" and "Invalid argument",
+update app.py and restart (or retest in Activity) to clear the cached failure.
+The Vulkan capability probe uses verbose initialization logs to retain library
+version, selected GPU and the final errors. It still uses only the bundled RAM
+fixture and does not open a movie. Normal playback logging is unchanged.
+
+FFmpeg 9 has a compatibility guard: libplacebo API versions below 365 cannot
+import Vulkan devices created with internally synchronized queue flags. The
+guard can return EINVAL without a specific error message. If the diagnostic
+shows both an older libplacebo API and the enabled
+VK_KHR_internally_synchronized_queues extension, use a consistent FFmpeg build
+linked against libplacebo API 365 or newer. Installing a newer runtime library
+alone may not change the API used to compile FFmpeg. Do not remove the guard.
+See the [FFmpeg 9 source](https://github.com/FFmpeg/FFmpeg/blob/n9.0.2/libavfilter/vf_libplacebo.c).
+
+Run the exact synthetic test from the project folder using the server's Python
+environment, and share its sanitized diagnostic if the error persists:
+
+```bash
+python -c "import app; print(app.tone_mapping_test('vaapi', 'libplacebo-bt2390'))"
+```
+
+This diagnosis is conditional; a generic EINVAL alone does not prove this cause.
+
 If the message names Parsed_anull, an audio format_out, and different channel
 layouts such as 5.1.2 → stereo, update app.py. Older HDR commands disabled implicit
 audio converters along with video conversion without providing an explicit audio

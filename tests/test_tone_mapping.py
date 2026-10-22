@@ -108,8 +108,32 @@ class ToneMappingTests(unittest.TestCase):
             self.assertIn('mapping failed', detail)
             self.assertEqual(run.call_args.kwargs['input'], HDR10_PROBE)
             self.assertIn('libplacebo=', run.call_args.args[0][run.call_args.args[0].index('-vf') + 1])
+            self.assertEqual(run.call_args.args[0][run.call_args.args[0].index('-loglevel') + 1], 'verbose')
             self.assertTrue(server.tone_mapping_test('vaapi')[0])
             self.assertEqual(run.call_count, 2)
+
+    def test_vulkan_diagnostics_preserve_library_context_and_identify_queue_guard(self):
+        extension = '[AVHWDeviceContext] Using device extension VK_KHR_internally_synchronized_queues'
+        library = '[libplacebo] Initialized libplacebo v7.360.0 (API v360)'
+        failure = '[AVFilterGraph] Error initializing filters\nError opening output files: Invalid argument'
+        log = '\n'.join([extension] + ['Unrelated extension'] * 200 + [library] + ['Other startup info'] * 200 + [failure])
+        filters = tone_mapping_plan(HDR10_VIDEO, 'vaapi', 'libplacebo-bt2390').required
+        with patch.object(server, 'ffmpeg_filters', return_value=filters), patch.object(
+                server, 'run_media_command', return_value=Mock(returncode=1, stdout=b'', stderr=log.encode())):
+            supported, detail = server.tone_mapping_test('vaapi', 'libplacebo-bt2390')
+        self.assertFalse(supported)
+        self.assertIn('API 365 or newer', detail)
+        self.assertIn(library, detail)
+        self.assertIn('Error initializing filters', detail)
+        self.assertLessEqual(len(detail), 2000)
+        for alternative in (log.replace('API v360', 'API v365'), log.replace(extension, 'Supported extension only')):
+            self.assertNotIn('API 365 or newer', server.vulkan_playback_error(alternative))
+
+    def test_successful_vulkan_probe_does_not_return_verbose_startup_output(self):
+        filters = tone_mapping_plan(HDR10_VIDEO, 'vaapi', 'libplacebo-bt2390').required
+        with patch.object(server, 'ffmpeg_filters', return_value=filters), patch.object(
+                server, 'run_media_command', return_value=Mock(returncode=0, stdout=b'mp4', stderr=b'Verbose startup details')):
+            self.assertEqual(server.tone_mapping_test('vaapi', 'libplacebo-bt2390'), (True, ''))
 
     def test_configured_tone_mapper_is_used_without_changing_sdr(self):
         with patch.object(server, 'load_settings', return_value={'tone_mapping': 'libplacebo-mobius'}):

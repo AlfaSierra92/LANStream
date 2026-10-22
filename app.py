@@ -2230,10 +2230,22 @@ def tone_mapping_test(backend: str, tone_mapper: str = 'vaapi') -> tuple[bool, s
         if missing:
             return False, 'FFmpeg is missing tone-mapping filters: ' + ', '.join(sorted(missing))
         command = transcode_command(backend, Path('hdr-test'), None, 0, source_video=HDR10_VIDEO, tone_mapper=tone_mapper)
+        if plan.vulkan:
+            # Device/library initialization failures may return EINVAL without
+            # an error-level explanation. Keep version/extension context for
+            # this small, cached RAM-only test; movie playback stays quiet.
+            command[command.index('-loglevel') + 1] = 'verbose'
         before, after = command.index('-skip_estimate_duration_from_pts'), command.index('-map')
         command[before:after] = ['-f', 'hevc', '-i', 'pipe:0', '-frames:v', '1']
         result = run_media_command(command, input=HDR10_PROBE, capture_output=True, timeout=20)
-        return result.returncode == 0 and bool(result.stdout), safe_playback_error((result.stderr or b'').decode('utf-8', 'replace'))
+        if result.returncode == 0 and result.stdout:
+            return True, ''
+        diagnostic = (result.stderr or b'').decode('utf-8', 'replace')
+        if plan.vulkan:
+            # Retain the failure plus Vulkan/libplacebo initialization context,
+            # rather than allowing long extension lists to hide the cause.
+            diagnostic = vulkan_playback_error(diagnostic)
+        return False, safe_playback_error(diagnostic)
     except (OSError, subprocess.TimeoutExpired, ToneMappingError) as error:
         return False, str(error)
 
@@ -2313,6 +2325,26 @@ def safe_playback_error(message: str) -> str:
         lines.append(line)
     text = '\n'.join(lines).strip()
     return text if len(text) <= 2000 else text[:1300] + '\n…\n' + text[-600:]
+
+
+def vulkan_playback_error(message: str) -> str:
+    """Summarize a synthetic test, preserving library and GPU evidence."""
+    lines = message.splitlines()
+    context = []
+    for line in lines:
+        if re.search(r'libplacebo|Using device:|Device name:|Driver (?:name|info):|Using device extension VK_KHR_internally_synchronized_queues', line, re.I):
+            context.append(line)
+    # A source-level compatibility guard in FFmpeg 9 returns EINVAL silently
+    # for flagged queues when built with libplacebo API <365. Only identify it
+    # when both the library API and enabled extension are present in the log.
+    api = re.search(r'libplacebo[^\n]*API\s+v?(\d+)', message, re.I)
+    extension_enabled = 'Using device extension VK_KHR_internally_synchronized_queues' in message
+    hint = ''
+    if api and int(api.group(1)) < 365 and extension_enabled:
+        hint = ('Vulkan queue compatibility: this libplacebo API cannot import internally synchronized queues. '
+                'Use an FFmpeg build linked against libplacebo API 365 or newer, '
+                'or restore tone_mapping=vaapi.\n')
+    return hint + '\n'.join(context[:8]) + '\n' + '\n'.join(lines[-12:])
 
 
 def rejected_playback(source, backend: str, message: str, status: int):
