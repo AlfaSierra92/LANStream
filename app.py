@@ -268,6 +268,12 @@ class StreamTracker:
                 while len(self._recent) > 128:
                     self._recent.pop(next(iter(self._recent)))
 
+    def fail(self, stream_id: str, message: str) -> None:
+        with self._lock:
+            item = self._streams.get(stream_id) or self._recent.get(stream_id)
+            if item:
+                item['technical'] = {**item['technical'], 'error': message}
+
     def playback_metrics(self, playback_id: str, source: Path, owner: str | None) -> dict | None:
         if not playback_id or not owner:
             return None
@@ -2274,6 +2280,20 @@ def transcode_codecs():
     return response
 
 
+def safe_playback_error(message: str) -> str:
+    # Encoder errors can echo internal gateway URLs, tokens or STRM credentials.
+    return re.sub(r'https?://[^\s\'"<>]+', '[media source]', str(message), flags=re.IGNORECASE)[-2000:]
+
+
+def rejected_playback(source, backend: str, message: str, status: int):
+    detail = safe_playback_error(message)
+    app.logger.error('Playback rejected (%s, %s): %s', backend, status, detail)
+    stream_id = stream_tracker.start(backend, source, detail='Playback rejected')
+    stream_tracker.fail(stream_id, detail)
+    stream_tracker.stop(stream_id)
+    return Response(detail, status=status, mimetype='text/plain')
+
+
 @app.route("/transcode/<int:root_index>/<path:relpath>")
 def transcode(root_index, relpath):
     root = get_root(root_index)
@@ -2320,12 +2340,12 @@ def transcode(root_index, relpath):
     try:
         mapping = tone_mapping_plan(source_video, backend)
     except ToneMappingError as error:
-        return Response(str(error), status=415, mimetype='text/plain')
+        return rejected_playback(source, backend, str(error), 415)
     if mapping.active:
         supported, detail = tone_mapping_test(backend)
         if not supported:
-            return Response('HDR-to-SDR tone mapping is unavailable on the selected backend.\n' + detail,
-                            status=503, mimetype='text/plain')
+            return rejected_playback(source, backend,
+                                     'HDR-to-SDR tone mapping is unavailable on the selected backend.\n' + detail, 503)
     if audio_index is not None and audio_codec != "aac":
         supported, detail = codec_encoder_test("software", audio_codec, True)
         if not supported:
@@ -2369,6 +2389,7 @@ def transcode(root_index, relpath):
             if closed:
                 return
             closed = True
+        failed_before_close = proc.poll() not in (0, None)
         try:
             if not cancelled and proc.poll() is None:
                 try:
@@ -2380,12 +2401,14 @@ def transcode(root_index, relpath):
             for pipe in (proc.stdout, proc.stderr):
                 if pipe:
                     pipe.close()
+            if (not cancelled or failed_before_close) and proc.returncode not in (0, None):
+                detail = safe_playback_error(stderr_tail.decode('utf-8', 'replace').strip()
+                                             or f'FFmpeg exited with code {proc.returncode}.')
+                stream_tracker.fail(stream_id, detail)
+                app.logger.error('FFmpeg transcode exited %s: %s', proc.returncode, detail)
         finally:
             media_runtime.release(proc)
             stream_tracker.stop(stream_id)
-        if not cancelled and proc.returncode not in (0, None):
-            app.logger.error("FFmpeg transcode exited %s: %s", proc.returncode,
-                             stderr_tail.decode("utf-8", "replace"))
 
     def generate():
         cancelled = False

@@ -194,9 +194,12 @@ Check the selected path and the response/log error:
 
 A failed preflight returns HTTP 503 before a playback encoder starts.
 Unsupported source color/Dolby combinations return HTTP 415.
-The media element can show a generic playback error; the HTTP response contains
-the detailed reason. Later source-specific failures can occur after streaming
-headers have already been sent.
+The player retrieves the retained error for its own request and shows the reason
+in the playback message and Playback info. Preflight rejection is also written to
+the server log. FFmpeg failures after headers were sent retain stderr for that
+same session/request; internal source URLs/tokens are removed from these messages.
+If the player still shows only the old generic failure, deploy app.py and player.js
+together and reload the page. Browser-only codec failures may have no encoder error.
 
 The implementation does not reconstruct Dolby Vision dynamic metadata or enhancement
 layers. Compatible base-layer mapping is not full Dolby Vision rendering.

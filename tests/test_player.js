@@ -134,3 +134,23 @@ context.subtitleSelect.onchange();
 assert.deepEqual(subtitleStarts, [0, 100]);
 assert.equal(requests.length, 2);
 console.log('Buffered seeks reuse playback; rapid remote seeks coalesce; pause and subtitle timeline preserved.');
+
+// A failed <video> request must expose the retained, session-scoped server error
+// without reopening the movie or turning off tone mapping.
+vm.runInContext(source.match(/^async function reportPlaybackFailure\([\s\S]*?^\}/m)[0], context);
+(async()=>{
+ context.playbackId='hdr-error';context.streamIsDirect=false;context.video.error={code:3};
+ context.config.statsUrl='/api/playback-info/0/movie.mkv';context.showControls=()=>{};
+ context.put=(id,value)=>{el(id).textContent=value;};
+ const urls=[];
+ context.fetch=async url=>{urls.push(url);return {ok:true,json:async()=>({stream:{technical:{error:'VAAPI driver does not support HDR'}}})};};
+ await context.reportPlaybackFailure();
+ assert.match(context.message,/VAAPI driver does not support HDR/);
+ assert.equal(el('statReason').textContent,'VAAPI driver does not support HDR');
+ assert.equal(urls.length,1);assert.match(urls[0],/playback_id=hdr-error/);
+ context.fetch=async()=>({ok:true,json:async()=>{context.playbackId='new-video';return {stream:{technical:{error:'stale error'}}};}});
+ context.message='new playback';
+ await context.reportPlaybackFailure();
+ assert.doesNotMatch(context.message,/stale error/);
+ console.log('Playback failures show the retained server reason; stale replies cannot overwrite a new request.');
+})().catch(error=>{console.error(error);process.exitCode=1;});

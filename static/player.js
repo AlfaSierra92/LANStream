@@ -107,7 +107,24 @@ video.addEventListener('playing',()=>{msg('');togglePlay.textContent='Ⅱ';toggl
 video.addEventListener('loadeddata',()=>{if(video.paused)msg('');});
 video.addEventListener('pause',()=>{togglePlay.textContent='▶';togglePlay.setAttribute('aria-label','Play');showControls();clearControlsTimer();});
 video.addEventListener('waiting',()=>{if(started)msg('Buffering…');});
-video.addEventListener('error',()=>{if(quality==='source'){msg('Original playback failed. Transcoding is disabled; choose Auto to allow conversion.');return;}if(streamIsDirect&&!forceTranscode){switchStream(()=>{forceTranscode=true;});return;}msg('Playback failed. Check the Activity page or try another quality.');});
+async function reportPlaybackFailure(){
+ const token=playbackId;
+ msg('Playback failed. Reading the server error…');showControls();
+ for(let attempt=0;attempt<3;attempt++){
+  if(attempt)await new Promise(resolve=>setTimeout(resolve,attempt*250));
+  if(token!==playbackId||streamIsDirect||!video.error)return;
+  try{
+   const response=await fetch(config.statsUrl+'?'+new URLSearchParams({playback_id:token}),{cache:'no-store'});
+   if(!response.ok)break;
+   const data=await response.json();
+   if(token!==playbackId||!video.error)return;
+   const detail=data.stream?.technical?.error;
+   if(detail){msg('Playback failed: '+detail);put('statReason',detail);return;}
+  }catch(_){break;}
+ }
+ if(token===playbackId&&video.error)msg('Playback failed. No encoder error was reported; check browser codec support and the server log.');
+}
+video.addEventListener('error',()=>{if(quality==='source'){msg('Original playback failed. Transcoding is disabled; choose Auto to allow conversion.');return;}if(streamIsDirect&&!forceTranscode){switchStream(()=>{forceTranscode=true;});return;}reportPlaybackFailure();});
 video.addEventListener('ended',()=>{showControls();msg('Playback finished');});
 seek.oninput=()=>{dragging=true;showControls();currentLabel.textContent=fmt(Number(seek.value));};
 seek.onchange=()=>{dragging=false;go(Number(seek.value));scheduleControlsHide();};
@@ -207,8 +224,9 @@ async function refreshStats(){
   const stream=data.stream;
   if(stream){
    lastTechnical=stream.technical||null;
+   if(lastTechnical?.error)put('statReason',lastTechnical.error);
    put('statToneMapping',streamIsDirect?'Off · original stream':lastTechnical?.tone_mapping||'—');
-   if(!streamIsDirect){put('statEncoder',lastTechnical?.encoder_label||stream.detail.split(' · ')[0]);if(lastTechnical?.fallback)put('statReason',lastTechnical.fallback);}
+   if(!streamIsDirect){put('statEncoder',lastTechnical?.encoder_label||stream.detail.split(' · ')[0]);if(lastTechnical?.fallback&&!lastTechnical?.error)put('statReason',lastTechnical.fallback);}
    put('statBandwidth',`${stream.bandwidth_mbps.toFixed(2)} Mbps${stream.active?'':' · request completed'}`);
    put('statTransferred',`${(stream.bytes_sent/1048576).toFixed(2)} MiB`);
   }else{if(!streamIsDirect)put('statEncoder','Waiting for encoder');put('statBandwidth','—');put('statTransferred','—');}

@@ -94,15 +94,48 @@ class ToneMappingTests(unittest.TestCase):
         for item in patches:
             item.start()
             self.addCleanup(item.stop)
+        client = server.app.test_client()
+        with client.session_transaction() as session:
+            session['playback_owner'] = 'hdr-test-owner'
         with patch.object(server, 'tone_mapping_test', return_value=(False, 'driver lacks HDR support')), patch.object(server.media_runtime, 'popen') as popen:
-            response = server.app.test_client().get('/transcode/0/hdr.mkv')
+            with self.assertLogs(server.app.logger, level='ERROR') as logs:
+                response = client.get('/transcode/0/hdr.mkv?playback_id=hdr-failed')
             self.assertEqual(response.status_code, 503)
             self.assertIn(b'driver lacks HDR support', response.data)
+            self.assertIn('driver lacks HDR support', logs.output[0])
+            metrics = client.get('/api/playback-info/0/hdr.mkv?playback_id=hdr-failed').json['stream']
+            self.assertIn('driver lacks HDR support', metrics['technical']['error'])
+            self.assertFalse(metrics['active'])
+            self.assertIsNone(server.app.test_client().get('/api/playback-info/0/hdr.mkv?playback_id=hdr-failed').json['stream'])
             popen.assert_not_called()
         with patch.object(server, 'tone_mapping_test', return_value=(True, '')), patch.object(server.media_runtime, 'popen', return_value=process), patch.object(server.stream_tracker, 'start', return_value='id') as start:
             response = server.app.test_client().get('/transcode/0/hdr.mkv', buffered=True)
             self.assertEqual(response.status_code, 200)
             self.assertIn('VAAPI', start.call_args.kwargs['technical']['tone_mapping'])
+
+    def test_ffmpeg_failure_is_retained_for_player_and_redacts_gateway_token(self):
+        process = Mock(stdout=io.BytesIO(), stderr=io.BytesIO(b'Failed to configure tonemap_vaapi http://127.0.0.1:9999/SECRET/movie'), returncode=1)
+        process.poll.return_value = 1
+        patches = [patch.object(server, 'authentication_required', return_value=False),
+                   patch.object(server, 'get_root', return_value=Path('/media')),
+                   patch.object(server, 'safe_path', return_value=Path('/media/hdr.mkv')),
+                   patch.object(server, 'is_video', return_value=True),
+                   patch.object(server, 'probe', return_value={'streams': [{'codec_type': 'video', **HDR10_VIDEO}]}),
+                   patch.object(server, 'selected_transcoder', return_value={'ok': True, 'key': 'vaapi'}),
+                   patch.object(server, 'tone_mapping_test', return_value=(True, '')),
+                   patch.object(server.media_runtime, 'popen', return_value=process)]
+        for item in patches:
+            item.start()
+            self.addCleanup(item.stop)
+        client = server.app.test_client()
+        with client.session_transaction() as session:
+            session['playback_owner'] = 'hdr-runtime-owner'
+        with self.assertLogs(server.app.logger, level='ERROR') as logs:
+            client.get('/transcode/0/hdr.mkv?playback_id=runtime-failed', buffered=True)
+        metrics = client.get('/api/playback-info/0/hdr.mkv?playback_id=runtime-failed').json['stream']
+        self.assertIn('Failed to configure tonemap_vaapi', metrics['technical']['error'])
+        self.assertNotIn('SECRET', metrics['technical']['error'])
+        self.assertNotIn('SECRET', '\n'.join(logs.output))
 
     @unittest.skipUnless(shutil.which('ffprobe'), 'FFprobe required')
     def test_bundled_probe_is_real_hdr10_with_mastering_metadata(self):
