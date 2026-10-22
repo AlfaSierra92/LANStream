@@ -13,7 +13,7 @@ class VAAPITests(unittest.TestCase):
     def test_gpu_frames_are_kept_on_device_for_all_output_codecs_and_qualities(self):
         for codec in server.VIDEO_CODECS:
             for name, quality in server.QUALITY_PROFILES.items():
-                if name == 'source':
+                if name in {'source', 'audio_only'}:
                     continue
                 for start in (0, 559.094):
                     with self.subTest(codec=codec, quality=name, start=start):

@@ -177,6 +177,13 @@ A hardware test skipped on a Mac is not validation of an Intel server.
 
 ## HDR conversion fails or colors look wrong
 
+To preserve the original video and bypass HDR filters, select **Original video ·
+convert audio only** in the player or Settings → Default quality
+(default_quality=audio_only). This still converts audio and remuxes into MP4.
+The browser must support the source H.264/HEVC/AV1 video and its HDR rendition;
+it is not a way to make unsupported video decodable. Check Playback info for
+video passthrough and tone mapping off. No video encoder/GPU test is required.
+
 For a dark SDR rendition, compare alternative GPU curves with
 tone_mapping=libplacebo-bt2390, libplacebo-mobius or libplacebo-reinhard in config.txt.
 Restart and reopen playback. Playback info identifies the active algorithm.

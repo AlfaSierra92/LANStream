@@ -45,7 +45,7 @@
         <button type="button" id="applyQuality">Apply quality</button>
       </div>
       <label for="videoCodecSelect">Video codec</label>
-      <select id="videoCodecSelect" aria-describedby="codecStatus"><option value="auto">Auto · H.264 when transcoding</option></select>
+      <select id="videoCodecSelect" aria-describedby="codecStatus"><option value="auto">Auto · H.264 when transcoding</option><option value="copy" disabled>Original video · no conversion</option></select>
       {% if audios %}<label for="audioCodecSelect">Audio codec</label><select id="audioCodecSelect" aria-describedby="codecStatus"><option value="auto">Auto · AAC when transcoding</option></select>{% endif %}
       <p id="codecStatus" class="codec-help" role="status">Open settings to check available codecs.</p>
       <button id="retryCodecs" type="button" class="codec-retry" hidden>Retry codec detection</button>

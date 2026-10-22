@@ -35,7 +35,7 @@ from media_runtime import media_runtime
 from media_cache import MetadataCache
 from nzbdav import MediaService, WebDAVPath, RemoteError
 from subtitle_windows import capture_packets, matroska_payload, subtitle_container
-from tone_mapping import tone_mapping_plan, ToneMappingError, HDR10_PROBE, HDR10_VIDEO
+from tone_mapping import tone_mapping_plan, ToneMappingPlan, ToneMappingError, HDR10_PROBE, HDR10_VIDEO
 
 run_media_command = media_runtime.run
 
@@ -2050,6 +2050,7 @@ def image_ready(kind, root_index, relpath):
 QUALITY_PROFILES = {
     "auto": {"label": "Auto · original when possible", "width": 0, "height": 0, "video_kbps": 0, "audio_kbps": 160},
     "source": {"label": "Original · no transcoding", "width": 0, "height": 0, "video_kbps": 0, "audio_kbps": 0},
+    "audio_only": {"label": "Original video · convert audio only", "width": 0, "height": 0, "video_kbps": 0, "audio_kbps": 192},
     "transcode": {"label": "Source resolution · transcode", "width": 0, "height": 0, "video_kbps": 0, "audio_kbps": 192},
     "2160p": {"label": "4K · 20 Mbps", "width": 3840, "height": 2160, "video_kbps": 20000, "audio_kbps": 192},
     "1440p": {"label": "1440p · 12 Mbps", "width": 2560, "height": 1440, "video_kbps": 12000, "audio_kbps": 192},
@@ -2132,6 +2133,20 @@ def transcode_command(
     quality = quality or QUALITY_PROFILES["auto"]
     if quality == QUALITY_PROFILES["source"]:
         raise ValueError("Original quality must not be transcoded")
+    if quality == QUALITY_PROFILES['audio_only']:
+        # Demux/remux compressed video packets. Never decode, filter, tone-map
+        # or encode video, even if the configured HDR backend is unavailable.
+        cmd = [FFMPEG, '-hide_banner', '-loglevel', 'error', '-nostdin']
+        cmd += playback_input_args(source, start) + ['-map', '0:v:0', '-c:v', 'copy']
+        if (source_video or {}).get('codec_name') == 'hevc':
+            cmd += ['-tag:v', 'hvc1']
+        if audio_index is None:
+            cmd += ['-an']
+        else:
+            cmd += ['-map', f'0:{audio_index}', '-c:a', AUDIO_CODECS[audio_codec]['encoder'],
+                    '-b:a', f"{quality['audio_kbps']}k", '-ac', '2', '-ar', '48000']
+        return cmd + ['-movflags', '+frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset',
+                      '-frag_duration', '500000', '-flush_packets', '1', '-f', 'mp4', 'pipe:1']
     limited = bool(quality["video_kbps"])
     tone_mapper = tone_mapper if tone_mapper is not None else load_settings()['tone_mapping']
     mapping = tone_mapping_plan(source_video, backend, tone_mapper)
@@ -2302,9 +2317,10 @@ def codec_transcoder(transcoder: dict, codec: str) -> tuple[str | None, str]:
 
 @app.route("/api/transcode-codecs")
 def transcode_codecs():
-    transcoder = selected_transcoder()
+    audio_only = request.args.get('audio_only') == '1'
+    transcoder = None if audio_only else selected_transcoder()
     videos = []
-    for codec, metadata in VIDEO_CODECS.items():
+    for codec, metadata in ([] if audio_only else VIDEO_CODECS.items()):
         backend, detail = codec_transcoder(transcoder, codec)
         encoder = VIDEO_ENCODERS[backend][codec] if backend else None
         videos.append({"id": codec, **metadata, "available": bool(backend), "backend": backend,
@@ -2373,8 +2389,9 @@ def transcode(root_index, relpath):
     if request.args.get("quality") == "source":
         abort(409, description="Original quality disables transcoding. Use the original media endpoint.")
     video_codec, audio_codec = requested_codecs()
-    transcoder = selected_transcoder()
-    if not transcoder["ok"]:
+    audio_only = request.args.get('quality') == 'audio_only'
+    transcoder = None if audio_only else selected_transcoder()
+    if not audio_only and not transcoder["ok"]:
         app.logger.error("No usable transcoder: %s", transcoder["detail"])
         return Response(
             "No usable transcoder is available.\n" + transcoder["detail"],
@@ -2395,18 +2412,24 @@ def transcode(root_index, relpath):
         except ValueError:
             abort(400)
 
-    backend, fallback = codec_transcoder(transcoder, video_codec)
+    backend, fallback = ('copy', '') if audio_only else codec_transcoder(transcoder, video_codec)
     if not backend:
         return Response(f"No encoder available for {VIDEO_CODECS[video_codec]['label']}.\n{fallback}", status=503, mimetype="text/plain")
     info = probe(source)
     source_video = next((track for track in info.get('streams', []) if track.get('codec_type') == 'video'), {})
+    if audio_only:
+        video_codec = source_video.get('codec_name')
+        if video_codec not in VIDEO_CODECS:
+            return rejected_playback(source, backend, 'Video passthrough requires H.264, HEVC or AV1 supported by the browser. Choose a video conversion profile for this source.', 415)
+        if audio_index is None:
+            audio_index = next((track['index'] for track in info.get('streams', []) if track.get('codec_type') == 'audio'), None)
     if audio_index is not None:
         _, audio_tracks, _ = stream_lists(info)
         if audio_index not in {track['index'] for track in audio_tracks}:
             abort(400)
     try:
-        tone_mapper = load_settings()['tone_mapping']
-        mapping = tone_mapping_plan(source_video, backend, tone_mapper)
+        tone_mapper = None if audio_only else load_settings()['tone_mapping']
+        mapping = ToneMappingPlan('Off · video passthrough') if audio_only else tone_mapping_plan(source_video, backend, tone_mapper)
     except ToneMappingError as error:
         return rejected_playback(source, backend, str(error), 415)
     if mapping.active:
@@ -2414,12 +2437,12 @@ def transcode(root_index, relpath):
         if not supported:
             return rejected_playback(source, backend,
                                      'HDR-to-SDR tone mapping is unavailable on the selected backend.\n' + detail, 503)
-    if audio_index is not None and audio_codec != "aac":
+    if audio_index is not None and (audio_only or audio_codec != "aac"):
         supported, detail = codec_encoder_test("software", audio_codec, True)
         if not supported:
-            return Response(f"Audio encoder unavailable: {detail}", status=503, mimetype="text/plain")
-    encoder = VIDEO_ENCODERS[backend][video_codec]
-    encoder_label = f"{BACKEND_LABELS[backend]} · {encoder}"
+            return rejected_playback(source, backend, f"Audio encoder unavailable: {detail}", 503)
+    encoder = 'copy' if audio_only else VIDEO_ENCODERS[backend][video_codec]
+    encoder_label = 'Video passthrough · audio conversion' if audio_only else f"{BACKEND_LABELS[backend]} · {encoder}"
     cmd = transcode_command(backend, target, audio_index, start, quality, video_codec, audio_codec, source_video, tone_mapper)
     app.logger.info("Starting %s transcode: %s", encoder_label,
                     source.name if isinstance(source, WebDAVPath) or source.suffix.lower() == ".strm" else " ".join(cmd))
@@ -2432,6 +2455,7 @@ def transcode(root_index, relpath):
         backend, source, start_offset=start,
         detail=f"{encoder_label} · {VIDEO_CODECS[video_codec]['label']} / {AUDIO_CODECS[audio_codec]['label'] if audio_index is not None else 'No audio'} · {quality['label']}",
         technical={"video_codec": video_codec, "audio_codec": audio_codec if audio_index is not None else None,
+                   "video_passthrough": audio_only,
                    "encoder": encoder, "encoder_label": encoder_label, "fallback": fallback,
                    "tone_mapping": mapping.label},
     )

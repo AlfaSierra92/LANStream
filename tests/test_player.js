@@ -64,6 +64,27 @@ context.onError();
 assert.equal(context.fallback, true);
 assert.equal(context.forceTranscode, true);
 assert.equal(context.usingDirect(), false);
+// Audio-only always remuxes the source video and never escalates to video
+// encoding after a browser error, including when Original is unsupported.
+context.config.profiles.audio_only = {height: 0, video_kbps: 0, audio_kbps: 192};
+context.config.transcodeUrl = '/transcode/0/movie.strm';
+context.totalDuration = 300;
+context.audio = () => '2';
+context.quality = 'audio_only';
+context.start(15, false);
+assert.equal(context.streamIsDirect, false);
+assert.match(context.video.src, /quality=audio_only/);
+assert.match(context.video.src, /audio=2/);
+assert.equal(context.videoCodecSelect.disabled, true);
+assert.equal(context.videoCodecSelect.value, 'copy');
+assert.equal(context.audioCodecSelect.disabled, false);
+assert.match(el('playbackMode').textContent, /Original video/);
+context.fallback = false;
+context.reportPlaybackFailure = () => {context.reported = true;};
+context.onError();
+assert.equal(context.reported, true);
+assert.equal(context.fallback, false);
+context.quality = 'auto';
 // Leaving Original while settings are already open must refresh the codec menu.
 context.qualitySelect = {value: 'auto'};
 context.customQuality = {hidden: false};

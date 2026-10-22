@@ -59,11 +59,18 @@ Other values are false. Prefer true/false in configuration files.
 | --- | --- |
 | auto | Use original media where compatible; otherwise transcode. |
 | source | Original media; no transcoding fallback. |
+| audio_only | Copy original H.264/HEVC/AV1 video into fragmented MP4; convert selected audio to AAC stereo, 48 kHz, 192 Kbps by default. No video encoding or tone mapping. |
 | transcode | Convert at source resolution without an explicit video bitrate ceiling. |
 | 360p, 480p, 720p, 1080p, 1440p, 2160p | Limited resolution/bitrate presets. |
 
 Custom quality belongs to the player controls, not default_quality.
 Changing this setting does not alter an already-open player.
+To preserve video while converting audio, select **Original video · convert
+audio only** in Settings → Default quality, or set default_quality=audio_only.
+The player also offers this mode and lets you change audio track/codec. The
+browser must decode the original video and handle HDR itself. It never falls
+back to video encoding in this mode; GPU encoder/tone-mapping availability is
+irrelevant. Unsupported video codecs require a different quality profile.
 See the [quality table](../manual.md#quality-and-codecs).
 
 ### Transcoder selection
@@ -86,8 +93,9 @@ The video decoder must independently support the input codec/profile.
 
 ### Tone mapping
 
-Recognized HDR input is converted to SDR
-whenever transcoding runs. SDR input and original-byte delivery are unchanged.
+Recognized HDR input is converted to SDR when video transcoding runs.
+Audio-only conversion copies the video and bypasses tone mapping entirely.
+SDR input and original-byte delivery are unchanged.
 
 The default tone_mapping=vaapi uses tonemap_vaapi for PQ/HDR10 and rejects HLG.
 For alternative GPU curves, add one of these global settings to config.txt:

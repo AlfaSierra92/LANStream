@@ -58,6 +58,12 @@ class SettingsTests(unittest.TestCase):
                 self.assertEqual(self.client.post('/settings', data=self.form(**invalid)).status_code, 400)
                 self.assertEqual(self.config.read_bytes(), before)
 
+    def test_audio_only_default_is_saved_and_available(self):
+        response = self.client.post('/settings', data=self.form(default_quality='audio_only'), follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(server.load_settings()['default_quality'], 'audio_only')
+        self.assertIn(b'Original video', response.data)
+
     def test_csrf_and_stale_page(self):
         data = self.form()
         before = self.config.read_bytes()

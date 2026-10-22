@@ -14,7 +14,7 @@ initial import, collection-wide scan or metadata matching service.
 | Local libraries | Exposes multiple server folders, external drives and shares already accessible to the operating system. |
 | Integrated NZBDAV | Browses remote video folders over WebDAV without rclone or FUSE. |
 | Video playback | Delivers original bytes when possible or converts the video with FFmpeg while it plays. |
-| Quality controls | Auto, Original, source-resolution transcoding, 360p–4K presets and custom targets. |
+| Quality controls | Auto, Original, original video with audio-only conversion, source-resolution transcoding, 360p–4K presets and custom targets. |
 | Hardware processing | VAAPI keeps video decoding, resizing, pixel conversion, HDR10 tone mapping and encoding on the GPU. |
 | Audio | Selects embedded tracks; transcoding outputs stereo at 48 kHz in AAC, Opus or MP3. |
 | Subtitles | Converts supported embedded text tracks to WebVTT in overlapping time windows. |
@@ -117,7 +117,7 @@ See [integrated NZBDAV](manual.md#integrated-nzbdav).
 
 ## HDR-to-SDR tone mapping
 
-Transcoding automatically converts recognized HDR input to SDR BT.709:
+Video transcoding automatically converts recognized HDR input to SDR BT.709:
 
 - **VAAPI:** HDR10/PQ uses tonemap_vaapi before GPU resizing and encoding.
   Optional libplacebo/Vulkan modes offer BT.2390, Mobius and Reinhard curves;
@@ -129,6 +129,9 @@ Transcoding automatically converts recognized HDR input to SDR BT.709:
   Dolby Vision dynamic metadata and enhancement layers are not reconstructed.
   Unsupported profiles, including Profile 5, are rejected for conversion.
 - **Original/direct playback:** bytes are unchanged; the client handles HDR.
+- **Original video · convert audio only:** copies video without tone mapping;
+  converts selected audio to AAC stereo by default. Save this as Default quality
+  in Settings (default_quality=audio_only). The browser must support the source video/HDR.
 
 SDR and 10-bit SDR sources are not tone-mapped. Playback info shows the selected
 tone-mapping path. A cached, in-memory HDR test checks the required pipeline before

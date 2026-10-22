@@ -22,6 +22,7 @@
       <h2 id="playbackHeading">Playback quality</h2>
       <p class="settings-help">Set the starting quality for new playback sessions. You can change it anytime in the player.</p>
       <label>Default quality<select name="default_quality">{% for key, profile in quality_profiles.items() %}<option value="{{ key }}" {% if values.default_quality == key %}selected{% endif %}>{{ profile.label }}</option>{% endfor %}</select></label>
+      <p class="settings-help">Choose “Original video · convert audio only” to preserve the video and convert audio to AAC stereo. The browser must support the original video codec and HDR format.</p>
       <div class="quality-guide"><div><strong>Auto</strong><p>Original file when supported, transcoding when needed.</p></div><div><strong>Choose a resolution</strong><p>Control bandwidth with a video bitrate target. Smaller sources stay smaller.</p></div><div><strong>Custom in the player</strong><p>Set resolution, video bitrate and audio bitrate separately.</p></div></div>
     </section>
     <section class="settings-card" aria-labelledby="accessHeading">

@@ -106,6 +106,14 @@ quality, output codecs and source color metadata.
 It maps video 0:v:0 and the selected audio stream, or disables audio.
 
 FFmpeg writes fragmented MP4 to stdout.
+With quality=audio_only, the command uses -c:v copy and bypasses video backend
+selection, encoder capability checks and tone_mapping_plan/test. Only the selected
+audio encoder is checked. Video packets and HDR properties are preserved; HEVC
+uses the hvc1 sample entry for browser delivery. The mode accepts H.264/HEVC/AV1,
+auto-selects the first audio track when no track is requested, and supports silent
+sources. Audio capability discovery can use /api/transcode-codecs?audio_only=1
+without probing video encoders. Diagnostics report video_passthrough=true,
+encoder=copy and tone mapping off. No automatic video encoding fallback occurs.
 The response reads its pipe and sends bytes to the browser while a separate thread
 drains stderr. There is no persistent encoded output movie.
 

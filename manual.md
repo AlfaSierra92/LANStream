@@ -325,8 +325,16 @@ They do not automatically enter the NZBDAV block cache.
 FFmpeg selects the first video stream and requested audio track, applies output
 settings and writes fragmented MP4 directly into the HTTP response.
 
-There is no separate audio-only conversion path that always copies video:
-requesting conversion can re-encode video as well.
+**Original video · convert audio only** copies H.264, HEVC or AV1 video packets
+into fragmented MP4 and converts only the selected audio. The default is AAC
+stereo, 48 kHz, 192 Kbps; the player also offers available Opus/MP3 encoders.
+No video decoder, encoder or tone-mapping filter runs. A failed GPU/HDR capability
+check does not prevent this mode. HDR remains in the original video, and the
+browser/display must support it. This is direct streaming with remuxing, rather
+than byte-for-byte original-file delivery. Unsupported codecs fail explicitly;
+the player never automatically starts video encoding. Video without audio is
+remuxed without invoking an audio encoder. Passthrough seeks can align to video
+keyframes rather than the exact requested frame.
 
 If a seek destination is already buffered in the browser, the player reuses it.
 A seek outside that buffer can start a new FFmpeg request at the new position.
@@ -342,6 +350,7 @@ Positions are not stored as persistent watch history.
 | --- | --- |
 | Auto | Original where compatible, otherwise H.264/AAC unless explicit codecs are selected. |
 | Original · no transcoding | Original bytes, with no conversion fallback. |
+| Original video · convert audio only | Preserve video; convert selected audio, without tone mapping. |
 | Source resolution · transcode | Convert at original resolution without an explicit video bitrate ceiling. |
 | 360p–4K preset | Convert within the preset's dimensions/bitrate. |
 | Custom | Apply the selected limits after Apply quality. |
@@ -420,8 +429,9 @@ encoding. Their tone mapping also uses CPU.
 
 ## HDR and tone mapping
 
-Transcoding recognized HDR produces **SDR BT.709** automatically.
-This applies to H.264, HEVC and AV1 outputs: there is no HDR-preserving transcode mode.
+Re-encoding recognized HDR video produces **SDR BT.709** automatically.
+This applies to H.264, HEVC and AV1 encoder outputs. Audio-only conversion copies
+the original video, preserving its HDR rather than running this conversion.
 SDR input, including 10-bit SDR, is not identified as HDR just from bit depth.
 
 PQ/smpte2084 identifies HDR10-style input.
