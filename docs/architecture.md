@@ -149,6 +149,14 @@ Limited presets configure video bitrate/maxrate/buffer; unrestricted profiles us
 backend-specific quality controls.
 Audio is converted to stereo at 48 kHz.
 
+Native-HLS clients use `format=hls` on the transcode route for H.264/AAC video
+conversion with known duration. The VOD playlist contains six-second
+`format=hls_segment` requests; every segment repeats media access checks and
+uses the existing encoder/HDR graph with bounded MPEG-TS output. Independently
+encoded segments declare timestamp discontinuities. Responses stream from FFmpeg
+without a disk video cache or a persistent HLS session. Other codecs and
+audio-only conversion keep the fragmented MP4 path.
+
 Playback input arguments omit a redundant seek to zero and disable unnecessary
 MPEG-PS/TS end-of-file duration estimates. FFprobe still obtains duration normally.
 Nonzero -ss remains before the input for seeking.

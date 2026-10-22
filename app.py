@@ -2004,6 +2004,15 @@ def cached_remote_response(source):
     if request.method == 'HEAD':
         return Response(status=206 if requested else 200, headers=headers,
                         mimetype=mimetypes.guess_type(source.path)[0] or 'application/octet-stream')
+    # Safari probes range support with bytes=0-1 before opening the movie.
+    # Do not make that handshake wait for a complete remote cache block.
+    if requested and start == 0 and end == 1:
+        data = service.client.read(resource, start, 2)
+        stream_id = stream_tracker.start('direct', source, detail='NZBDAV · range probe')
+        stream_tracker.add_bytes(stream_id, len(data))
+        stream_tracker.stop(stream_id)
+        return Response(data, status=206, headers=headers,
+                        mimetype=mimetypes.guess_type(source.path)[0] or 'application/octet-stream')
     stream_id = stream_tracker.start('direct', source, detail='NZBDAV · shared RAM cache')
 
     def generate():
@@ -2399,6 +2408,43 @@ def rejected_playback(source, backend: str, message: str, status: int):
     return Response(detail, status=status, mimetype='text/plain')
 
 
+HLS_SEGMENT_SECONDS = 6
+
+
+def hls_playlist(root_index, relpath, start, duration):
+    remaining = max(0, duration - start)
+    count = math.ceil(remaining / HLS_SEGMENT_SECONDS)
+    if count < 1 or count > 100000:
+        abort(416, description='HLS requires a known duration and a start before the end.')
+    lines = ['#EXTM3U', '#EXT-X-VERSION:3', '#EXT-X-PLAYLIST-TYPE:VOD',
+             f'#EXT-X-TARGETDURATION:{HLS_SEGMENT_SECONDS}', '#EXT-X-MEDIA-SEQUENCE:0',
+             '#EXT-X-INDEPENDENT-SEGMENTS']
+    params = {key: request.args[key] for key in (
+        'start', 'audio', 'quality', 'video_codec', 'audio_codec', 'playback_id',
+        'height', 'bitrate', 'audio_bitrate') if key in request.args}
+    params['format'] = 'hls_segment'
+    for index in range(count):
+        # Each bounded request starts a fresh encoder and timestamp sequence.
+        # Declare that discontinuity so native HLS maintains its media timeline.
+        if index:
+            lines.append('#EXT-X-DISCONTINUITY')
+        length = min(HLS_SEGMENT_SECONDS, remaining - index * HLS_SEGMENT_SECONDS)
+        lines.append(f'#EXTINF:{length:.6f},')
+        params['segment'] = index
+        lines.append(url_for('transcode', root_index=root_index, relpath=relpath, **params))
+    lines.append('#EXT-X-ENDLIST')
+    return Response('\n'.join(lines) + '\n', mimetype='application/vnd.apple.mpegurl',
+                    headers={'Cache-Control': 'no-store'})
+
+
+def hls_segment_command(command, length):
+    # Reuse the selected GPU/CPU, scaling, audio and HDR graph. Only replace
+    # the output muxer; segments stream to the response without video files.
+    return command[:command.index('-movflags')] + [
+        '-t', f'{length:.6f}', '-mpegts_flags', '+resend_headers',
+        '-muxdelay', '0', '-flush_packets', '1', '-f', 'mpegts', 'pipe:1']
+
+
 @app.route("/transcode/<int:root_index>/<path:relpath>")
 def transcode(root_index, relpath):
     root = get_root(root_index)
@@ -2412,6 +2458,11 @@ def transcode(root_index, relpath):
         abort(409, description="Original quality disables transcoding. Use the original media endpoint.")
     video_codec, audio_codec = requested_codecs()
     audio_only = request.args.get('quality') == 'audio_only'
+    output_format = request.args.get('format', 'mp4')
+    if output_format not in {'mp4', 'hls', 'hls_segment'}:
+        abort(400)
+    if output_format != 'mp4' and (audio_only or video_codec != 'h264' or audio_codec != 'aac'):
+        abort(400, description='HLS conversion requires H.264 video and AAC audio.')
     transcoder = None if audio_only else selected_transcoder()
     if not audio_only and not transcoder["ok"]:
         app.logger.error("No usable transcoder: %s", transcoder["detail"])
@@ -2438,6 +2489,23 @@ def transcode(root_index, relpath):
     if not backend:
         return Response(f"No encoder available for {VIDEO_CODECS[video_codec]['label']}.\n{fallback}", status=503, mimetype="text/plain")
     info = probe(source)
+    segment_length = None
+    if output_format != 'mp4':
+        duration = duration_seconds(info)
+        if duration <= start:
+            abort(416, description='HLS requires a known duration and a start before the end.')
+        if output_format == 'hls':
+            return hls_playlist(root_index, relpath, start, duration)
+        try:
+            segment = int(request.args.get('segment', ''))
+        except ValueError:
+            abort(400)
+        if segment < 0 or segment >= math.ceil((duration - start) / HLS_SEGMENT_SECONDS):
+            abort(416)
+        start += segment * HLS_SEGMENT_SECONDS
+        segment_length = min(HLS_SEGMENT_SECONDS, duration - start)
+        if request.method == 'HEAD':
+            return Response(mimetype='video/mp2t', headers={'Cache-Control': 'no-store'})
     source_video = next((track for track in info.get('streams', []) if track.get('codec_type') == 'video'), {})
     if audio_only:
         video_codec = source_video.get('codec_name')
@@ -2466,6 +2534,8 @@ def transcode(root_index, relpath):
     encoder = 'copy' if audio_only else VIDEO_ENCODERS[backend][video_codec]
     encoder_label = 'Video passthrough · audio conversion' if audio_only else f"{BACKEND_LABELS[backend]} · {encoder}"
     cmd = transcode_command(backend, target, audio_index, start, quality, video_codec, audio_codec, source_video, tone_mapper)
+    if segment_length is not None:
+        cmd = hls_segment_command(cmd, segment_length)
     app.logger.info("Starting %s transcode: %s", encoder_label,
                     source.name if isinstance(source, WebDAVPath) or source.suffix.lower() == ".strm" else " ".join(cmd))
     try:
@@ -2549,7 +2619,7 @@ def transcode(root_index, relpath):
     # context across cancelled streams when the player switches quality.
     response = Response(generate())
     response.call_on_close(close)
-    response.headers["Content-Type"] = "video/mp4"
+    response.headers["Content-Type"] = 'video/mp2t' if segment_length is not None else 'video/mp4'
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Accel-Buffering"] = "no"
     return response

@@ -6,6 +6,14 @@
 Identify the failing stage first: folder browsing, metadata probing, player startup,
 continuous playback, subtitle loading or seeking. They can have different causes.
 
+## MKV stays buffering on Safari or iPhone
+
+Select **Auto** or a video conversion preset. Safari cannot play the original
+MKV container. H.264/AAC conversion uses native HLS when the duration is known;
+leave both codec selectors on Auto. Restart the server after updating and reopen
+the player page to load the updated JavaScript. Video conversion needs a working
+encoder and, for HDR, the configured tone-mapping backend.
+
 ## Cannot reach the server
 
 Verify the process/container is running, then try its local address on the server.

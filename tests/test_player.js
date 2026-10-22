@@ -24,7 +24,7 @@ const context = {
 // Use an arrow closure so msg works when invoked as a plain script function.
 context.msg = text => { context.message = text; };
 vm.createContext(context);
-for (const name of ['usingDirect', 'updateQualityInfo', 'cancelPendingSeek', 'requestPlay', 'transcode', 'start']) {
+for (const name of ['usingDirect', 'nativeHls', 'useHls', 'updateQualityInfo', 'cancelPendingSeek', 'requestPlay', 'transcode', 'start']) {
   const singleLine = source.match(new RegExp(`^function ${name}\\(.*\\}\\s*$`, 'm'));
   const multiLine = source.match(new RegExp(`^function ${name}\\([\\s\\S]*?^\\}`, 'm'));
   vm.runInContext(singleLine ? singleLine[0] : multiLine[0], context);
@@ -94,6 +94,36 @@ context.qualitySelect.onchange();
 assert.equal(context.codecRefreshes, 1);
 assert.equal(context.customQuality.hidden, true);
 console.log('Original: unmodified media, no fallback or encoder request; Auto: conversion fallback verified.');
+
+// Safari uses a native HLS playlist for H.264/AAC conversion of MKV sources.
+context.video.canPlayType=mime=>mime==='application/vnd.apple.mpegurl'?'probably':'';
+context.config.native=false;
+context.quality='auto';context.videoCodec='auto';context.audioCodec='auto';
+context.transcode(12,false);
+assert.match(context.video.src,/format=hls/);
+assert.match(context.video.src,/start=12/);
+context.videoCodec='hevc';
+context.transcode(0,false);
+assert.doesNotMatch(context.video.src,/format=hls/);
+context.videoCodec='auto';context.quality='audio_only';
+context.transcode(0,false);
+assert.doesNotMatch(context.video.src,/format=hls/);
+context.quality='auto';context.video.canPlayType=()=>'';
+context.transcode(0,false);
+assert.doesNotMatch(context.video.src,/format=hls/);
+// Original remains unchanged; explain unsupported MKV instead of buffering.
+context.config.media={container:'matroska,webm'};
+context.video.canPlayType=mime=>mime==='application/vnd.apple.mpegurl'?'probably':'';
+context.quality='source';context.showControls=()=>{};
+context.video.pause=()=>{context.video.paused=true;};
+context.video.removeAttribute=name=>{if(name==='src')context.video.src='';};
+context.start(0,false);
+assert.equal(context.video.src,'');
+assert.equal(context.started,false);
+assert.match(context.message,/Safari cannot play the original MKV/);
+context.config.media={container:'mov,mp4'};
+context.quality='auto';
+console.log('Safari: MKV conversion selects HLS; unsupported Original explains Auto; other codec choices preserved.');
 
 // Seeking within the transcoded buffer must not reopen FFmpeg or the mount.
 for (const name of ['logicalTime', 'go']) {

@@ -172,8 +172,9 @@ HEVC Main 10 decode test or a vainfo VLD entry does not prove tone-mapping suppo
 
 ## Playback and operational limits
 
-Video conversion and audio-only conversion produce fragmented MP4 directly to
-the HTTP response, without saving a converted movie. In audio-only mode, video
+Video conversion uses native HLS for H.264/AAC on supported browsers such as
+Safari, or fragmented MP4 otherwise. Audio-only conversion uses fragmented MP4.
+Output streams directly to HTTP without saving a converted movie. In audio-only mode, video
 packets are copied: the server does not decode, tone-map or re-encode them. The
 browser must support the original video and HDR format.
 

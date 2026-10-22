@@ -23,6 +23,8 @@ function fmt(sec){sec=Math.max(0,Math.floor(sec||0));const h=Math.floor(sec/3600
 function usingDirect(){return quality==='source'||(config.native&&(!config.nativeMime||video.canPlayType(config.nativeMime)!=='')&&quality==='auto'&&videoCodec==='auto'&&audioCodec==='auto'&&!forceTranscode&&(!audioSelect||audioSelect.selectedIndex===0));}
 function logicalTime(){return pendingSeek!==null?pendingSeek:streamIsDirect?(video.currentTime||0):logicalOffset+(video.currentTime||0);}
 function audio(){return audioSelect?audioSelect.value:'';}
+function nativeHls(){return video.canPlayType('application/vnd.apple.mpegurl')!=='';}
+function useHls(){return nativeHls()&&totalDuration>0&&quality!=='audio_only'&&['auto','h264'].includes(videoCodec)&&['auto','aac'].includes(audioCodec);}
 function msg(text){message.textContent=text;message.classList.toggle('hidden',!text);}
 function requestPlay(){
  const token=playbackId;
@@ -58,6 +60,7 @@ function transcode(at,autoplay=true){
  if(quality==='source'){msg('Transcoding is disabled. Choose Auto to allow conversion.');return;}
  logicalOffset=Math.max(0,totalDuration>0?Math.min(totalDuration,at):at);newRequest();subtitles(logicalOffset);msg('Starting stream…');
  const params=new URLSearchParams({start:logicalOffset,audio:audio(),quality,video_codec:quality==='audio_only'?'auto':videoCodec,audio_codec:audioCodec,playback_id:playbackId});
+ if(useHls())params.set('format','hls');
  if(quality==='custom'){params.set('height',custom.height);params.set('bitrate',custom.bitrate);params.set('audio_bitrate',custom.audio);}
  video.src=config.transcodeUrl+'?'+params;video.load();if(autoplay)requestPlay();
 }
@@ -68,6 +71,10 @@ function start(at=0,autoplay=true){
  if(quality==='source'){videoCodec='auto';audioCodec='auto';videoCodecSelect.value='auto';if(audioCodecSelect)audioCodecSelect.value='auto';if(audioSelect)audioSelect.selectedIndex=0;forceTranscode=false;}
  streamIsDirect=usingDirect();updateQualityInfo();
  if(streamIsDirect){
+  if(nativeHls()&&config.media?.container?.split(',').includes('matroska')){
+   video.pause();video.removeAttribute('src');video.load();started=false;
+   msg('Safari cannot play the original MKV container. Choose Auto in playback settings to convert it.');showControls();return;
+  }
   newRequest();subtitles(0,at);video.src=config.nativeUrl+'?'+new URLSearchParams({playback_id:playbackId});video.load();
   metadataSeek=()=>{metadataSeek=null;if(at>0)try{video.currentTime=at;}catch(_){}};
   if(video.readyState>=1)metadataSeek();else video.addEventListener('loadedmetadata',metadataSeek,{once:true});

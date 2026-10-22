@@ -335,6 +335,14 @@ They do not automatically enter the NZBDAV block cache.
 FFmpeg selects the first video stream and requested audio track, applies output
 settings and writes fragmented MP4 directly into the HTTP response.
 
+For browsers with native HLS support, including Safari on iPhone, H.264/AAC video
+conversion with a known duration uses an HLS playlist instead. Six-second MPEG-TS
+segments are encoded on demand and streamed without saving converted video files.
+Quality, selected audio, subtitles and seeking remain available. Each segment
+starts a new encoder; startup cost depends on source seeking and encoder speed.
+Other codec selections and audio-only conversion retain fragmented MP4 delivery.
+Safari cannot play the original MKV container: choose **Auto** to convert it.
+
 ### Original video with audio conversion
 
 **Original video · convert audio only** copies H.264, HEVC or AV1 video packets

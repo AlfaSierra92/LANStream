@@ -252,6 +252,48 @@ class IntegratedDAVTests(unittest.TestCase):
         self.assertEqual(self.client.get(route, headers={'Range': 'bytes=9999-'}).status_code, 416)
         self.assertEqual(set(self.root.iterdir()), {self.config})
 
+    def test_safari_initial_probe_reads_only_two_remote_bytes(self):
+        route = f'/media/{self.index}/Folder/video%20name.mp4'
+        response = self.client.get(route, headers={'Range': 'bytes=0-1'}, buffered=True)
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response.data, b'01')
+        self.assertEqual(response.headers['Content-Length'], '2')
+        self.assertEqual(response.headers['Content-Range'], 'bytes 0-1/1000')
+        self.assertEqual(response.headers['Accept-Ranges'], 'bytes')
+        reads = [call for call in self.http.calls if call[0] == 'GET']
+        self.assertEqual([call[2] for call in reads], ['bytes=0-1'])
+        self.assertEqual(server.nzbdav_service().cache.snapshot()['stored_bytes'], 0)
+        # HEAD must remain metadata-only; the subsequent movie uses the cache.
+        response = self.client.head(route, headers={'Range': 'bytes=0-1'})
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response.data, b'')
+        self.assertEqual(len([call for call in self.http.calls if call[0] == 'GET']), 1)
+        response = self.client.get(route, headers={'Range': 'bytes=0-99'}, buffered=True)
+        self.assertEqual(response.data, b'0123456789' * 10)
+        self.assertGreater(server.nzbdav_service().cache.snapshot()['stored_bytes'], 0)
+
+    @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'FFmpeg required')
+    def test_real_mkv_from_nzbdav_converts_to_hls_without_video_cache_files(self):
+        sample = self.root / 'sample.mkv'
+        subprocess.run([server.FFMPEG, '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=160x90:rate=12',
+                        '-f', 'lavfi', '-i', 'sine=sample_rate=48000', '-t', '1', '-c:v', 'libx264',
+                        '-c:a', 'aac', '-y', str(sample)], check=True, capture_output=True, timeout=15)
+        self.http.files['content/movie.mkv'] = sample.read_bytes()
+        sample.unlink()
+        with patch.object(server, 'selected_transcoder', return_value={'ok': True, 'key': 'software', 'label': 'Software'}), \
+             patch.object(server, 'codec_transcoder', return_value=('software', '')):
+            response = self.client.get(f'/transcode/{self.index}/movie.mkv?format=hls&quality=360p&audio=1')
+            self.assertEqual(response.status_code, 200, response.data)
+            urls = [line for line in response.get_data(as_text=True).splitlines() if line.startswith('/')]
+            self.assertEqual(len(urls), 1)
+            response = self.client.get(urls[0], buffered=True)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.mimetype, 'video/mp2t')
+            decoded = subprocess.run([server.FFMPEG, '-v', 'error', '-i', 'pipe:0', '-f', 'null', '-'],
+                                     input=response.data, capture_output=True, timeout=15)
+            self.assertEqual(decoded.returncode, 0, decoded.stderr)
+        self.assertEqual(set(self.root.iterdir()), {self.config})
+
     def test_file_larger_than_ram_cache_streams_to_end_then_refetches_old_range(self):
         payload = bytes(range(256)) * (20 * 1024 * 1024 // 256)
         self.http.files['content/large.mp4'] = payload
