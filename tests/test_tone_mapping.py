@@ -77,9 +77,32 @@ class ToneMappingTests(unittest.TestCase):
             self.assertIn('tonemap_vaapi', command[command.index('-vf') + 1])
 
     def test_filter_inventory_parses_real_listing(self):
-        result = Mock(returncode=0, stdout=' ..C tonemap_vaapi V->V Tone map\n .SC zscale V->V Convert\n ... sidedata V->V Metadata\n')
-        with patch.object(server, 'run_media_command', return_value=result):
-            self.assertEqual(server.ffmpeg_filters(), {'tonemap_vaapi', 'zscale', 'sidedata'})
+        for flags in ('..', '...', '..C', '....'):
+            for channel in ('stdout', 'stderr'):
+                with self.subTest(flags=flags, channel=channel):
+                    server.ffmpeg_filters.cache_clear()
+                    listing = (f' {flags} tonemap_vaapi V->V Tone map\n'
+                               f' {flags} scale_vaapi V->V Scale\n'
+                               f' {flags} setparams V->V Tags\n'
+                               f' {flags} sidedata V->V Metadata\n'
+                               ' T. = Timeline support\n ... fake Not-a-signature\n')
+                    result = Mock(returncode=0, stdout='', stderr='')
+                    setattr(result, channel, listing)
+                    with patch.object(server, 'run_media_command', return_value=result):
+                        self.assertEqual(server.ffmpeg_filters(), {'tonemap_vaapi', 'scale_vaapi', 'setparams', 'sidedata'})
+
+    def test_two_column_flags_reach_real_capability_probe(self):
+        listing = '\n'.join(f' .. {name} V->V Filter' for name in tone_mapping_plan(HDR10_VIDEO, 'vaapi').required)
+        with patch.object(server, 'run_media_command', side_effect=[
+            Mock(returncode=0, stdout=listing, stderr=''),
+            Mock(returncode=0, stdout=b'mp4', stderr=b'')]) as run:
+            self.assertTrue(server.tone_mapping_test('vaapi')[0])
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_args.kwargs['input'], HDR10_PROBE)
+
+    @unittest.skipUnless(shutil.which('ffmpeg'), 'FFmpeg required')
+    def test_installed_ffmpeg_inventory_finds_standard_metadata_filters(self):
+        self.assertTrue({'setparams', 'sidedata'} <= server.ffmpeg_filters())
 
     def test_endpoint_reports_mapping_and_rejects_unavailable_pipeline(self):
         info = {'streams': [{'codec_type': 'video', **HDR10_VIDEO}]}

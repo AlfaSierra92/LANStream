@@ -176,6 +176,12 @@ A hardware test skipped on a Mac is not validation of an Intel server.
 
 ## HDR conversion fails or colors look wrong
 
+If the error lists several standard filters as missing at once, including
+setparams and sidedata, update LANStream: older builds incorrectly assumed a
+three-character flag column in FFmpeg's filter list. Newer FFmpeg versions can
+use two characters. Restart, or retest in Activity after updating, to clear the
+cached failure. This parser issue does not establish a driver limitation.
+
 Playback info should show HDR10/PQ → SDR BT.709 with VAAPI, or the CPU Hable path.
 Source color transfer remains the original metadata, so it can still say smpte2084
 while the output is correctly SDR.

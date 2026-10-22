@@ -2197,7 +2197,12 @@ def ffmpeg_filters() -> frozenset[str]:
     result = run_media_command([FFMPEG, '-hide_banner', '-filters'], capture_output=True, text=True, timeout=10)
     if result.returncode:
         raise ToneMappingError('Unable to inspect FFmpeg tone-mapping filters.')
-    return frozenset(re.findall(r'^\s*[TSC\.A-Z|]{3}\s+(\w+)\s', result.stdout, re.MULTILINE))
+    # FFmpeg releases differ in their flag-column width (e.g. "..." vs "..").
+    # Recognize actual filter rows by their media signature, not a fixed width.
+    listing = f'{result.stdout or ""}\n{result.stderr or ""}'
+    return frozenset(re.findall(
+        r'^\s*[A-Z.]+\s+(\w+)\s+(?:[AVNS]+|\|)->(?:[AVNS]+|\|)(?:\s|$)',
+        listing, re.MULTILINE))
 
 
 @lru_cache(maxsize=8)
