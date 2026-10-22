@@ -176,6 +176,13 @@ A hardware test skipped on a Mac is not validation of an Intel server.
 
 ## HDR conversion fails or colors look wrong
 
+For an error containing "Impossible to convert", a long pixel-format list and
+"Function not implemented", deploy current app.py and tone_mapping.py together.
+Older graphs did not declare the SDR boundary after tonemap_vaapi to FFmpeg's
+color negotiation. Restart to clear the cached capability failure. This differs
+from a driver explicitly reporting that HDR processing is unsupported.
+Long format lists are now shortened without discarding the first error line.
+
 If the error lists several standard filters as missing at once, including
 setparams and sidedata, update LANStream: older builds incorrectly assumed a
 three-character flag column in FFmpeg's filter list. Newer FFmpeg versions can

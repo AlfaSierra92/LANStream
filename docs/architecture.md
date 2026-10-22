@@ -167,6 +167,11 @@ Known supported color values are validated before constructing filter strings.
 Unsupported values fail instead of being interpolated into arbitrary filter syntax.
 
 VAAPI uses explicit BT.709 output on tonemap_vaapi and limited-range GPU scaling.
+Immediately after tone mapping, a metadata-only setparams filter declares the SDR
+matrix, transfer, primaries and range to FFmpeg's graph negotiation. This prevents
+FFmpeg 8.1 from propagating the input BT.2020 matrix to the encoder and inserting
+an incompatible software converter. Automatic conversion filters are disabled for
+the HDR VAAPI graph; both the capability test and playback use this same path.
 The CPU graph linearizes HDR with zscale, uses floating-point RGB, converts gamut,
 applies Hable and re-encodes BT.709 transfer/matrix/range.
 The output encoder is tagged BT.709 and stale frame side data is deleted after

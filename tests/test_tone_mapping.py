@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import app as server
-from tone_mapping import HDR10_PROBE, HDR10_VIDEO, ToneMappingError, tone_mapping_plan
+from tone_mapping import HDR10_PROBE, HDR10_VIDEO, SDR_FRAME_PROPERTIES, ToneMappingError, tone_mapping_plan
 
 
 class ToneMappingTests(unittest.TestCase):
@@ -30,6 +30,9 @@ class ToneMappingTests(unittest.TestCase):
                                                server.QUALITY_PROFILES['720p'], codec, source_video=HDR10_VIDEO)
             graph = command[command.index('-vf') + 1]
             self.assertLess(graph.index('tonemap_vaapi='), graph.index('scale_vaapi='))
+            self.assertLess(graph.index('tonemap_vaapi='), graph.index(SDR_FRAME_PROPERTIES))
+            self.assertLess(graph.index(SDR_FRAME_PROPERTIES), graph.index('scale_vaapi='))
+            self.assertIn('-noauto_conversion_filters', command)
             self.assertLess(graph.index('scale_vaapi='), graph.index('sidedata=mode=delete'))
             for unwanted in ('hwupload', 'hwdownload', 'zscale', ',format='):
                 self.assertNotIn(unwanted, graph)
@@ -90,6 +93,37 @@ class ToneMappingTests(unittest.TestCase):
                     setattr(result, channel, listing)
                     with patch.object(server, 'run_media_command', return_value=result):
                         self.assertEqual(server.ffmpeg_filters(), {'tonemap_vaapi', 'scale_vaapi', 'setparams', 'sidedata'})
+
+    def test_capability_error_keeps_cause_before_large_format_dump(self):
+        cause = "Impossible to convert between the formats supported by 'Parsed_sidedata' and 'auto_scale_0'"
+        error = cause + '\nLink formats:\n    src: ' + 'yuv420p10le ' * 1000 + '\n    dst: vaapi\nError reinitializing filters!'
+        with patch.object(server, 'ffmpeg_filters', return_value=tone_mapping_plan(HDR10_VIDEO, 'vaapi').required), patch.object(server, 'run_media_command', return_value=Mock(returncode=1, stdout=b'', stderr=error.encode())):
+            supported, detail = server.tone_mapping_test('vaapi')
+        self.assertFalse(supported)
+        self.assertTrue(detail.startswith(cause))
+        self.assertIn('dst: vaapi', detail)
+        self.assertIn('Error reinitializing filters!', detail)
+        self.assertLessEqual(len(detail), 2000)
+
+    @unittest.skipUnless(shutil.which('ffmpeg'), 'FFmpeg required')
+    def test_explicit_sdr_boundary_needs_no_implicit_color_converter(self):
+        # A null filter models VPP's pass-through format negotiation, not its
+        # pixel processing. This reproduces the graph bug without a VAAPI GPU.
+        # FFmpeg 8.1 must not negotiate BT.2020 all the way to a BT.709 encoder.
+        prefix = tone_mapping_plan(HDR10_VIDEO, 'vaapi').filters[0] + ',null'
+        base = [server.FFMPEG, '-hide_banner', '-loglevel', 'error', '-noauto_conversion_filters',
+                '-f', 'lavfi', '-i', 'color=size=64x64:rate=1', '-frames:v', '1', '-vf']
+        output = ['-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709',
+                  '-color_range', 'tv', '-c:v', 'libx264', '-f', 'null', '-']
+        broken = subprocess.run(base + [prefix + ',format=yuv420p,sidedata=mode=delete'] + output,
+                                capture_output=True, timeout=10)
+        version = subprocess.check_output([server.FFMPEG, '-version'], text=True, timeout=10)
+        if 'ffmpeg version 8.1' in version:
+            self.assertNotEqual(broken.returncode, 0)
+            self.assertIn(b'common format', broken.stderr)
+        fixed = subprocess.run(base + [prefix + ',' + SDR_FRAME_PROPERTIES + ',format=yuv420p,sidedata=mode=delete'] + output,
+                               capture_output=True, timeout=10)
+        self.assertEqual(fixed.returncode, 0, fixed.stderr.decode('utf-8', 'replace'))
 
     def test_two_column_flags_reach_real_capability_probe(self):
         listing = '\n'.join(f' .. {name} V->V Filter' for name in tone_mapping_plan(HDR10_VIDEO, 'vaapi').required)

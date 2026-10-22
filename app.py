@@ -2134,6 +2134,9 @@ def transcode_command(
     mapping = tone_mapping_plan(source_video, backend)
     cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-nostdin"]
     if backend == "vaapi":
+        if mapping.active:
+            # A fully specified hardware graph needs no implicit CPU converter.
+            cmd += ['-noauto_conversion_filters']
         # Share one device between decoder, VPP and encoder. Keep decoded
         # surfaces on the GPU; software frames must never enter this graph.
         cmd += ["-init_hw_device", f"vaapi=lanstream:{VAAPI_DEVICE}",
@@ -2217,7 +2220,7 @@ def tone_mapping_test(backend: str) -> tuple[bool, str]:
         before, after = command.index('-skip_estimate_duration_from_pts'), command.index('-map')
         command[before:after] = ['-f', 'hevc', '-i', 'pipe:0', '-frames:v', '1']
         result = run_media_command(command, input=HDR10_PROBE, capture_output=True, timeout=20)
-        return result.returncode == 0 and bool(result.stdout), (result.stderr or b'').decode('utf-8', 'replace')[-1500:]
+        return result.returncode == 0 and bool(result.stdout), safe_playback_error((result.stderr or b'').decode('utf-8', 'replace'))
     except (OSError, subprocess.TimeoutExpired, ToneMappingError) as error:
         return False, str(error)
 
@@ -2287,7 +2290,16 @@ def transcode_codecs():
 
 def safe_playback_error(message: str) -> str:
     # Encoder errors can echo internal gateway URLs, tokens or STRM credentials.
-    return re.sub(r'https?://[^\s\'"<>]+', '[media source]', str(message), flags=re.IGNORECASE)[-2000:]
+    text = re.sub(r'https?://[^\s\'"<>]+', '[media source]', str(message), flags=re.IGNORECASE)
+    lines = []
+    for line in text.splitlines():
+        # Format-negotiation dumps can list hundreds of pixel formats. Retain
+        # the leading error and link names instead of showing only that list.
+        if len(line) > 240 and re.match(r'^\s*(?:\[[^]]+\]\s*)?(?:src|dst):', line):
+            line = line[:200] + ' … [format list shortened]'
+        lines.append(line)
+    text = '\n'.join(lines).strip()
+    return text if len(text) <= 2000 else text[:1300] + '\n…\n' + text[-600:]
 
 
 def rejected_playback(source, backend: str, message: str, status: int):
@@ -2372,12 +2384,14 @@ def transcode(root_index, relpath):
                    "encoder": encoder, "encoder_label": encoder_label, "fallback": fallback,
                    "tone_mapping": mapping.label},
     )
+    stderr_head = bytearray()
     stderr_tail = bytearray()
 
     def drain_errors():
         try:
             if proc.stderr:
                 while chunk := proc.stderr.read(4096):
+                    stderr_head.extend(chunk[:max(0, 4000 - len(stderr_head))])
                     stderr_tail.extend(chunk)
                     del stderr_tail[:-4000]
         except (OSError, ValueError):
@@ -2407,7 +2421,8 @@ def transcode(root_index, relpath):
                 if pipe:
                     pipe.close()
             if (not cancelled or failed_before_close) and proc.returncode not in (0, None):
-                detail = safe_playback_error(stderr_tail.decode('utf-8', 'replace').strip()
+                errors = bytes(stderr_head) if stderr_head == stderr_tail else bytes(stderr_head) + b'\n...\n' + bytes(stderr_tail)
+                detail = safe_playback_error(errors.decode('utf-8', 'replace').strip()
                                              or f'FFmpeg exited with code {proc.returncode}.')
                 stream_tracker.fail(stream_id, detail)
                 app.logger.error('FFmpeg transcode exited %s: %s', proc.returncode, detail)

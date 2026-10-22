@@ -25,6 +25,7 @@ HDR10_PROBE = base64.b64decode(
     'AAAAAUABDAH//wIgAAADAJAAAAMAAAMAPJWYCQAAAAFCAQECIAAAAwCQAAADAAADADygCAgEBNllZpJMrwFqEiASCAAAAwAIAAADAAhAAAAAAUQBwXK0YkAAAAFOAZAEA+gBkIAAAAFOAYkYM8KGxB1MC7iE0D6APRNAQgCYloAAAAMAAYAAAAEoAa8TIWKDQOZo47/89M/H9kAtWJjtrvgEPKXvcrgFwB8kXJMChCpAC0iHAAADACag'
 )
 HDR10_VIDEO = {'color_transfer': 'smpte2084', 'color_primaries': 'bt2020', 'color_space': 'bt2020nc'}
+SDR_FRAME_PROPERTIES = 'setparams=range=limited:color_primaries=bt709:color_trc=bt709:colorspace=bt709'
 
 
 def tone_mapping_plan(video, backend):
@@ -62,7 +63,12 @@ def tone_mapping_plan(video, backend):
         return ToneMappingPlan(
             f'{source} → SDR BT.709 · VAAPI',
             (f'setparams=color_primaries={primaries}:color_trc={transfer}:colorspace={matrix}',
-             'tonemap_vaapi=format=nv12:p=bt709:t=bt709:m=bt709'),
+             'tonemap_vaapi=format=nv12:p=bt709:t=bt709:m=bt709',
+             # VPP changes actual frame properties but its format query can
+             # still propagate the input matrix through the graph. Declare
+             # the SDR boundary explicitly so FFmpeg 8.1 does not insert a
+             # software color converter between hardware filters/encoder.
+             SDR_FRAME_PROPERTIES),
             frozenset({'setparams', 'tonemap_vaapi', 'scale_vaapi', 'sidedata'}),
         )
     return ToneMappingPlan(
