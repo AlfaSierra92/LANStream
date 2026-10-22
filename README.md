@@ -230,6 +230,25 @@ video/audio bitrate targets, encoder, subtitle selection, buffer ahead, displaye
 dropped frames, and request transfer statistics. Source metadata includes frame rate,
 pixel format, color transfer, audio channels/sample rate and file bitrate.
 
+Embedded text subtitles load in overlapping 20-second windows, with the next window
+prefetched during playback. Seeking or changing tracks cancels obsolete browser
+requests; subtitles follow the source timeline in both original and transcoded
+playback. Old cues are discarded from browser memory. Known cue end times are kept,
+including captions that span more than one window.
+
+The reader first bounds the packet window using all-stream timestamps, so silent
+subtitle gaps do not cause a scan to the next distant caption. MKV subtitle blocks
+and MP4 MOV_TEXT samples are read from their byte offsets through the shared RAM
+cache. Unusual compressed/laced blocks and other containers use a bounded packet
+reader fallback. Only a small subtitle-only container is built in RAM for FFmpeg's
+WebVTT conversion; FFmpeg does not reopen the full film for that conversion. ASS
+headers are retained; MOV_TEXT conversion preserves caption text, without its
+optional font/style sample extensions. No temporary media files are created.
+
+A subtitle request has a 30-second deadline. Timeout returns HTTP 504 with a player
+notice and retry backoff; video continues independently. Deploy both the Python
+changes and the updated player scripts, then reload open player pages.
+
 Browser metrics refresh once per second while the panel is visible. Unavailable values
 show “—”. FPS measures displayed frames over wall-clock time, rather than the file's
 nominal frame rate. Transfer rate measures HTTP delivery, including buffering, rather

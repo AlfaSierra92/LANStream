@@ -34,6 +34,7 @@ import fitz
 from media_runtime import media_runtime
 from media_cache import MetadataCache
 from nzbdav import MediaService, WebDAVPath, RemoteError
+from subtitle_windows import capture_packets, matroska_payload, subtitle_container
 
 run_media_command = media_runtime.run
 
@@ -772,10 +773,10 @@ def probe_media_target(path: Path, target: Path | str) -> dict[str, Any]:
     cmd = [
         FFPROBE, "-v", "error",
         "-show_entries",
-        "format=duration,size,format_name,bit_rate:"
-        "stream=index,codec_type,codec_name,profile,level,width,height,channels,channel_layout,sample_rate,bit_rate,avg_frame_rate,pix_fmt,color_space,color_transfer,color_primaries:"
+        "format=duration,size,format_name,bit_rate,start_time:"
+        "stream=index,codec_type,codec_name,profile,level,width,height,channels,channel_layout,sample_rate,bit_rate,avg_frame_rate,pix_fmt,color_space,color_transfer,color_primaries,extradata:"
         "stream_tags=language,title",
-        "-of", "json", media_input_target(target),
+        '-show_data', "-of", "json", media_input_target(target),
     ]
     try:
         proc = run_media_command(cmd, capture_output=True, text=True, timeout=30)
@@ -2361,6 +2362,22 @@ def playback_info(root_index, relpath):
     return response
 
 
+def subtitle_bytes(target, position, length, timeout):
+    if isinstance(target, WebDAVPath):
+        resource = target.service.client.stat(target.path)
+        end = min(resource.size, position + length) - 1
+        return b''.join(target.service.chunks(resource, position, end))
+    if isinstance(target, Path):
+        with target.open('rb') as handle:
+            handle.seek(position)
+            return handle.read(length)
+    with urlopen(Request(target, headers={'Range': f'bytes={position}-{position + length - 1}',
+                                         'Accept-Encoding': 'identity'}), timeout=timeout) as response:
+        if response.status != 206 or not response.headers.get('Content-Range', '').startswith(f'bytes {position}-'):
+            raise ValueError('Subtitle source does not support byte ranges')
+        return response.read(length)
+
+
 @app.route("/subtitle/<int:root_index>/<path:relpath>")
 def subtitle(root_index, relpath):
     root = get_root(root_index)
@@ -2371,21 +2388,101 @@ def subtitle(root_index, relpath):
     try:
         idx = int(request.args["stream"])
         start = float(request.args.get("start", "0"))
+        duration = float(request.args.get("duration", "20"))
     except (KeyError, ValueError):
         abort(400)
 
-    if idx < 0 or not math.isfinite(start) or start < 0:
+    if (idx < 0 or not math.isfinite(start) or start < 0
+            or not math.isfinite(duration) or not 5 <= duration <= 30
+            or request.args.get('absolute', '0') not in {'0', '1'}):
         abort(400)
 
-    proc = run_media_command(
-        [FFMPEG, "-hide_banner", "-loglevel", "error"]
-        + playback_input_args(target, start)
-        + ["-map", f"0:{idx}", "-f", "webvtt", "pipe:1"],
-        capture_output=True, timeout=30,
-    )
+    offset = start if request.args.get('absolute') == '1' else 0
+    try:
+        deadline = time.monotonic() + 30
+        info = probe(source)
+        track = next((row for row in info.get('streams', []) if row.get('index') == idx), {})
+        if track.get('codec_type') != 'subtitle' or track.get('codec_name') not in TEXT_SUBTITLE_CODECS:
+            abort(415, description="Select a supported text subtitle track.")
+        try:
+            origin = float(info.get('format', {}).get('start_time', 0) or 0)
+            if not math.isfinite(origin):
+                origin = 0
+        except (ValueError, TypeError):
+            origin = 0
+        absolute_start = max(0, start + origin)
+        # Do not use -select_streams here: FFprobe must observe video/audio
+        # timestamps too, to stop inside a long gap between subtitle packets.
+        packets = run_media_command(
+            [FFPROBE, '-v', 'error', '-read_intervals', f'{absolute_start:.3f}%{absolute_start + duration:.3f}',
+             '-show_packets', '-show_entries', 'packet=stream_index,pts_time,duration_time,size,pos',
+             '-of', 'json', media_input_target(target)],
+            capture_output=True, timeout=max(0.01, deadline - time.monotonic()),
+        )
+        if packets.returncode:
+            abort(502, description="Unable to read this subtitle window.")
+        selected = []
+        for row in json.loads(packets.stdout).get('packets', []):
+            if row.get('stream_index') != idx:
+                continue
+            try:
+                pts = float(row['pts_time'])
+                length = float(row.get('duration_time', 0) or 0)
+            except (KeyError, ValueError, TypeError):
+                continue
+            if pts < absolute_start + duration and pts + max(0, length) > absolute_start:
+                selected.append(row)
+        count = len(selected)
+        if count == 0:
+            return Response(b'WEBVTT\n\n', mimetype='text/vtt', headers={'Cache-Control': 'no-store'})
+        # Prefer exact subtitle byte ranges. The generic fallback captures a
+        # known number of subtitle packets, then stops before extra lookahead.
+        # Video/audio bytes stay out of the JSON and conversion input.
+        formats = set(info.get('format', {}).get('format_name', '').split(','))
+        matroska = bool(formats & {'matroska', 'webm'})
+        raw = None
+        if matroska or (track.get('codec_name') == 'mov_text' and formats & {'mov', 'mp4'}):
+            try:
+                raw = []
+                total = 0
+                for row in selected:
+                    position, size = int(row['pos']), int(row['size'])
+                    total += size
+                    if position < 0 or size <= 0 or total > 2 * 1024 * 1024:
+                        raise ValueError('Invalid subtitle packet range')
+                    prefix = min(16, position) if matroska else 0
+                    payload = subtitle_bytes(target, position - prefix, size + prefix + 20 if matroska else size,
+                                             max(0.01, deadline - time.monotonic()))
+                    payload = matroska_payload(payload, size, prefix) if matroska else payload
+                    raw.append({**row, 'payload': payload})
+            except (ValueError, KeyError):
+                raw = None
+        if raw is None:
+            raw = capture_packets(media_runtime,
+                [FFPROBE, '-v', 'error', '-read_intervals', f'{absolute_start:.3f}%+#{count}',
+                 '-select_streams', str(idx), '-show_packets', '-show_data',
+                 '-show_entries', 'packet=pts_time,duration_time,data',
+                 '-of', 'json=compact=1', media_input_target(target)],
+                count=count, timeout=max(0.01, deadline - time.monotonic()), start=absolute_start,
+            )
+        data = subtitle_container(track, raw, start + origin, duration)
+        if data is None:
+            return Response(b'WEBVTT\n\n', mimetype='text/vtt', headers={'Cache-Control': 'no-store'})
+        proc = run_media_command(
+            [FFMPEG, "-hide_banner", "-loglevel", "error", '-copyts', '-f', 'matroska', '-i', 'pipe:0']
+            + ["-map", '0:s:0', '-output_ts_offset', f'{offset:.3f}', '-flush_packets', '1',
+               "-f", "webvtt", "pipe:1"],
+            input=data, capture_output=True, timeout=max(0.01, deadline - time.monotonic()),
+        )
+    except subprocess.TimeoutExpired:
+        abort(504, description="Subtitle window timed out. Video playback can continue; subtitles will retry.")
+    except (OSError, RuntimeError):
+        abort(503, description="Unable to start subtitle extraction.")
+    except (ValueError, TypeError):
+        abort(415, description="Unable to decode this subtitle window.")
     if proc.returncode:
-        abort(415)
-    return Response(proc.stdout, mimetype="text/vtt")
+        abort(415, description="Unable to convert this track to text subtitles.")
+    return Response(proc.stdout, mimetype="text/vtt", headers={'Cache-Control': 'no-store'})
 
 
 def transcoder_status_payload(force_refresh: bool = False) -> dict[str, Any]:

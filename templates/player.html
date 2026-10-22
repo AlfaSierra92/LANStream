@@ -51,7 +51,7 @@
       <button id="retryCodecs" type="button" class="codec-retry" hidden>Retry codec detection</button>
       {% if audios %}<label for="audioSelect">Audio track</label><select id="audioSelect">{% for a in audios %}<option value="{{ a.index }}">{{ a.language }} · {{ a.codec }}{% if a.title %} · {{ a.title }}{% endif %}</option>{% endfor %}</select>{% endif %}
       {% set text_subs = subtitles | selectattr("text_supported") | list %}
-      {% if text_subs %}<label for="subtitleSelect">Subtitles</label><select id="subtitleSelect"><option value="">Subtitles off</option>{% for s in text_subs %}<option value="{{ s.index }}">{{ s.language }}{% if s.title %} · {{ s.title }}{% endif %}</option>{% endfor %}</select>{% endif %}
+      {% if text_subs %}<label for="subtitleSelect">Subtitles</label><select id="subtitleSelect"><option value="">Subtitles off</option>{% for s in text_subs %}<option value="{{ s.index }}">{{ s.language }}{% if s.title %} · {{ s.title }}{% endif %}</option>{% endfor %}</select><p id="subtitleStatus" class="settings-help" role="status" hidden></p>{% endif %}
     </section>
   </div>
   <aside id="playbackStats" class="playback-stats" aria-label="Playback info" hidden>
@@ -99,5 +99,6 @@
  'statsUrl': url_for('playback_info',root_index=root_index,relpath=relpath),
  'codecsUrl': url_for('transcode_codecs')
 }|tojson }}</script>
+<script src="{{ url_for('static',filename='subtitles.js') }}" defer></script>
 <script src="{{ url_for('static',filename='player.js') }}" defer></script>
 </body></html>

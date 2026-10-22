@@ -16,6 +16,7 @@ let streamIsDirect=false, logicalOffset=0, started=false, dragging=false, forceT
 let controlsTimer=null, controlsHovered=false, playbackId='', lastFrameSample=null;
 let statsTimer=null, statsBusy=false, statsRequest=null;
 let seekTimer=null, pendingSeek=null;
+const subtitleWindows=new WindowedSubtitles(video,config.subtitleUrl,el('subtitleStatus'),totalDuration);
 
 function fmt(sec){sec=Math.max(0,Math.floor(sec||0));const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;return h?`${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${m}:${String(s).padStart(2,'0')}`;}
 function usingDirect(){return quality==='source'||(config.native&&(!config.nativeMime||video.canPlayType(config.nativeMime)!=='')&&quality==='auto'&&videoCodec==='auto'&&audioCodec==='auto'&&!forceTranscode&&(!audioSelect||audioSelect.selectedIndex===0));}
@@ -34,11 +35,8 @@ function updateQualityInfo(){
  el('playbackMode').textContent=direct?'Direct play':quality==='custom'?`Custom · ${custom.height}p`:`Transcode · ${profile.height?profile.height+'p':'original'}`;
  el('qualityDescription').textContent=direct?'Original file · no conversion':quality==='custom'?`Up to ${custom.height}p · video ${custom.bitrate/1000} Mbps + audio ${custom.audio} Kbps`:profile.video_kbps?`Up to ${profile.height}p · video ${profile.video_kbps/1000} Mbps + audio ${profile.audio_kbps} Kbps`:'Source resolution · variable bitrate';
 }
-function subtitles(start){
- video.querySelectorAll('track').forEach(track=>track.remove());
- if(!subtitleSelect||!subtitleSelect.value)return;
- const track=document.createElement('track');track.kind='subtitles';track.label=subtitleSelect.selectedOptions[0].textContent;track.srclang='und';track.default=true;
- track.src=config.subtitleUrl+'?'+new URLSearchParams({stream:subtitleSelect.value,start});video.appendChild(track);
+function subtitles(start,at=start){
+ subtitleWindows.select(subtitleSelect?.value||'',start,at);
 }
 function transcode(at,autoplay=true){
  cancelPendingSeek();
@@ -55,7 +53,7 @@ function start(at=0,autoplay=true){
  if(quality==='source'){videoCodec='auto';audioCodec='auto';videoCodecSelect.value='auto';if(audioCodecSelect)audioCodecSelect.value='auto';if(audioSelect)audioSelect.selectedIndex=0;forceTranscode=false;}
  streamIsDirect=usingDirect();updateQualityInfo();
  if(streamIsDirect){
-  newRequest();subtitles(0);video.src=config.nativeUrl+'?'+new URLSearchParams({playback_id:playbackId});video.load();
+  newRequest();subtitles(0,at);video.src=config.nativeUrl+'?'+new URLSearchParams({playback_id:playbackId});video.load();
   metadataSeek=()=>{metadataSeek=null;try{video.currentTime=at;}catch(_){}if(autoplay)video.play().catch(()=>{});};
   if(video.readyState>=1)metadataSeek();else video.addEventListener('loadedmetadata',metadataSeek,{once:true});
  }else transcode(at,autoplay);
@@ -120,7 +118,7 @@ el('fullscreenTop').onclick=toggleFullscreen;
 qualitySelect.onchange=()=>{customQuality.hidden=qualitySelect.value!=='custom';if(qualitySelect.value!=='custom'){switchStream(()=>{quality=qualitySelect.value;forceTranscode=false;});loadCodecOptions();}};
 el('applyQuality').onclick=()=>{if(!el('customBitrate').reportValidity())return;switchStream(()=>{quality='custom';custom={height:Number(el('customHeight').value),bitrate:Number(el('customBitrate').value),audio:Number(el('customAudio').value)};forceTranscode=false;});};
 if(audioSelect)audioSelect.onchange=()=>switchStream(()=>{});
-if(subtitleSelect)subtitleSelect.onchange=()=>{showControls();if(started)subtitles(streamIsDirect?0:logicalOffset);};
+if(subtitleSelect)subtitleSelect.onchange=()=>{showControls();if(started)subtitles(streamIsDirect?0:logicalOffset,logicalTime());};
 
 function supportsCodec(codec){return video.canPlayType(`video/mp4; codecs="${codec}"`)!=='';}
 function codecHint(){
@@ -232,5 +230,6 @@ document.addEventListener('keydown',event=>{
 document.addEventListener('fullscreenchange',updateFullscreenState);
 document.addEventListener('webkitfullscreenchange',updateFullscreenState);
 document.addEventListener('visibilitychange',()=>{lastFrameSample=null;if(!document.hidden)refreshStats();});
-window.addEventListener('pagehide',()=>{cancelPendingSeek();clearInterval(statsTimer);clearControlsTimer();statsRequest?.abort();});
+window.addEventListener('pagehide',()=>{subtitleWindows.stop();cancelPendingSeek();clearInterval(statsTimer);clearControlsTimer();statsRequest?.abort();});
+window.addEventListener('pageshow',event=>{if(event.persisted&&started)subtitles(streamIsDirect?0:logicalOffset,logicalTime());});
 start(0);updateFullscreenState();

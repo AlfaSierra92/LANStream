@@ -42,13 +42,15 @@ class MediaRuntime:
         except ProcessLookupError:
             pass
 
-    def run(self, command, *, capture_output=False, timeout=None, check=False, **kwargs):
+    def run(self, command, *, capture_output=False, timeout=None, check=False, input=None, **kwargs):
         if capture_output:
             kwargs.update(stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if input is not None:
+            kwargs['stdin'] = subprocess.PIPE
         process = self.popen(command, **kwargs)
         try:
             try:
-                stdout, stderr = process.communicate(timeout=timeout)
+                stdout, stderr = process.communicate(input=input, timeout=timeout)
             except subprocess.TimeoutExpired:
                 process.kill()
                 stdout, stderr = process.communicate()

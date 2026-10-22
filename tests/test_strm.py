@@ -129,11 +129,15 @@ class StrmTests(unittest.TestCase):
             self.assertEqual(command[command.index('-i') + 1], url)
             self.assertEqual(command[command.index('-ss') + 1], '12.000')
             self.assertEqual(self.tracker.snapshot(), [])
-        with patch.object(server, 'run_media_command', return_value=Mock(returncode=0, stdout=b'WEBVTT')) as run:
+        packets = Mock(returncode=0, stdout=json.dumps({'packets': [{'stream_index': 2, 'pts_time': '1', 'duration_time': '2'}]}))
+        info = {**INFO, 'streams': INFO['streams'] + [{'index': 2, 'codec_type': 'subtitle', 'codec_name': 'subrip'}]}
+        raw = [{'pts_time': '1', 'duration_time': '2', 'data': '\n00000000: 4869                                     Hi\n'}]
+        with patch.object(server, 'probe', return_value=info), patch.object(server, 'run_media_command', side_effect=[packets, Mock(returncode=0, stdout=b'WEBVTT')]) as run, patch.object(server, 'capture_packets', return_value=raw) as capture:
             response = self.client.get('/subtitle/0/movie.STRM?stream=2')
             self.assertEqual(response.data, b'WEBVTT')
+            self.assertEqual(capture.call_args.args[1][-1], url)
             command = run.call_args.args[0]
-            self.assertEqual(command[command.index('-i') + 1], url)
+            self.assertEqual(command[command.index('-i') + 1], 'pipe:0')
 
     def test_remote_compatibility_uses_container_and_codecs(self):
         self.write('https://example.com/play?id=123')

@@ -351,6 +351,47 @@ class IntegratedDAVTests(unittest.TestCase):
         self.assertEqual(self.client.get(f'/browse/{self.index}/').status_code, 503)
 
     @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'FFmpeg required')
+    def test_sparse_subtitle_window_does_not_read_the_rest_of_the_film(self):
+        captions = self.root / 'sparse.srt'
+        captions.write_text('1\n00:00:02,000 --> 00:00:40,000\nFirst cue\n\n'
+                            '2\n00:02:50,000 --> 00:02:52,000\nDistant cue\n')
+        source = self.root / 'long.mkv'
+        subprocess.run([server.FFMPEG, '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=160x90:rate=6',
+                        '-i', str(captions), '-map', '0:v', '-map', '1:s', '-t', '180',
+                        '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '6', '-c:s', 'srt', str(source)],
+                       capture_output=True, check=True, timeout=20)
+        payload = source.read_bytes()
+        self.http.files['content/long.mkv'] = payload
+        service = server.nzbdav_service()
+        service.cache = BlockCache(256 * 1024, block_size=16 * 1024)
+        route = f'/subtitle/{self.index}/long.mkv?stream=1&duration=20&absolute=1'
+        response = self.client.get(route)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIn(b'First cue', response.data)
+        self.assertIn(b'00:40.', response.data)
+        self.assertNotIn(b'Distant cue', response.data)
+        fetched = service.cache.snapshot()['misses'] * service.cache.block_size
+        self.assertLess(fetched, len(payload) // 2, 'A sparse track must not demux until its distant next cue')
+        response = self.client.get(route + '&start=165')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIn(b'Distant cue', response.data)
+        self.assertIn(b'02:50.', response.data)
+        # ASS keeps its CodecPrivate header and style conversion; MOV_TEXT
+        # samples are read directly from their MP4 sample offsets.
+        for suffix, codec in (('mkv', 'ass'), ('mp4', 'mov_text')):
+            alternate = self.root / f'variant.{suffix}'
+            subprocess.run([server.FFMPEG, '-v', 'error', '-i', str(source), '-map', '0',
+                            '-c:v', 'copy', '-c:s', codec, str(alternate)],
+                           capture_output=True, check=True, timeout=20)
+            self.http.files[f'content/variant.{suffix}'] = alternate.read_bytes()
+            response = self.client.get(f'/subtitle/{self.index}/variant.{suffix}?stream=1&start=165&absolute=1')
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertIn(b'Distant cue', response.data)
+            self.assertIn(b'02:50.', response.data)
+        silent = self.client.get(f'/subtitle/{self.index}/long.mkv?stream=1&start=90')
+        self.assertEqual(silent.data, b'WEBVTT\n\n')
+
+    @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'FFmpeg required')
     def test_real_ffprobe_transcode_and_subtitles_use_one_ram_cache(self):
         subtitle = self.root / 'captions.srt'
         subtitle.write_text('1\n00:00:00,000 --> 00:00:01,000\nHello from NZBDAV\n')
