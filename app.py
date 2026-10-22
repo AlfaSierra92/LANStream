@@ -2150,6 +2150,12 @@ def playback_input_args(source: Path | str, start: float) -> list[str]:
     return args + ["-i", media_input_target(source)]
 
 
+# Wait for the first fragment before writing track timing/edit lists. Writing
+# empty_moov immediately resets each track independently, losing source A/V
+# offsets, encoder delay and copied video preroll after a non-keyframe seek.
+PLAYBACK_MP4_FLAGS = '+frag_keyframe+delay_moov+default_base_moof+omit_tfhd_offset'
+
+
 def transcode_command(
     backend: str,
     source: Path | str,
@@ -2176,7 +2182,7 @@ def transcode_command(
         else:
             cmd += ['-map', f'0:{audio_index}', '-c:a', AUDIO_CODECS[audio_codec]['encoder'],
                     '-b:a', f"{quality['audio_kbps']}k", '-ac', '2', '-ar', '48000']
-        return cmd + ['-movflags', '+frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset',
+        return cmd + ['-movflags', PLAYBACK_MP4_FLAGS,
                       '-frag_duration', '500000', '-flush_packets', '1', '-f', 'mp4', 'pipe:1']
     limited = bool(quality["video_kbps"])
     tone_mapper = tone_mapper if tone_mapper is not None else load_settings()['tone_mapping']
@@ -2254,7 +2260,7 @@ def transcode_command(
             sample_format = {'aac': 'fltp', 'opus': 'flt', 'mp3': 'fltp'}[audio_codec]
             cmd += ['-af', f'aresample=48000:ochl=stereo:osf={sample_format}']
         cmd += ["-c:a", AUDIO_CODECS[audio_codec]["encoder"], "-b:a", f"{quality['audio_kbps']}k", "-ac", "2", "-ar", "48000"]
-    cmd += ["-movflags", "+frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset",
+    cmd += ["-movflags", PLAYBACK_MP4_FLAGS,
             "-frag_duration", "500000", "-flush_packets", "1", "-f", "mp4", "pipe:1"]
     return cmd
 
