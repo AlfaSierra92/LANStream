@@ -42,6 +42,25 @@ bundled LEC module may expose different controls.
 
 ## Quick start: Docker
 
+With Docker Compose, run from the project directory:
+
+```bash
+docker compose up -d --build
+```
+
+Open http://SERVER-IP:8060 and configure NZBDAV in **Settings → Access & media**.
+The first start uses the application's defaults and an empty library. Settings
+creates `runtime/config/config.txt`; configuration and graphics cache persist
+under `runtime/`. To reuse an existing configuration, place it at
+`runtime/config/config.txt` before starting. To change the host port, run
+`LANSTREAM_PORT=8070 docker compose up -d --build`.
+
+For local folders or Linux VAAPI, uncomment the relevant volume/device entries
+in `compose.yaml` and adjust their paths. View logs with `docker compose logs -f`;
+stop with `docker compose down`.
+
+Alternatively, use Docker directly:
+
 From the project directory:
 
 ```bash

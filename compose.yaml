@@ -1,0 +1,20 @@
+services:
+  lanstream:
+    build:
+      context: .
+    image: lanstream:local
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${LANSTREAM_PORT:-8060}:8080"
+    environment:
+      LANSTREAM_CONFIG_FILE: /config/config.txt
+      LANSTREAM_CACHE_DIR: /cache
+    volumes:
+      - ./runtime/config:/config
+      - ./runtime/cache:/cache
+      # Optional local library; configure /media paths in Settings.
+      # - /srv/media:/media:ro
+    # Optional VAAPI acceleration on Linux; enable when /dev/dri exists.
+    # devices:
+    #   - /dev/dri:/dev/dri
