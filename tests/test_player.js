@@ -111,19 +111,30 @@ assert.doesNotMatch(context.video.src,/format=hls/);
 context.quality='auto';context.video.canPlayType=()=>'';
 context.transcode(0,false);
 assert.doesNotMatch(context.video.src,/format=hls/);
-// Original remains unchanged; explain unsupported MKV instead of buffering.
+// HLS support says nothing about MKV support. Original must try the actual
+// file on every browser; Auto must keep routing MKV through conversion.
 context.config.media={container:'matroska,webm'};
-context.video.canPlayType=mime=>mime==='application/vnd.apple.mpegurl'?'probably':'';
-context.quality='source';context.showControls=()=>{};
-context.video.pause=()=>{context.video.paused=true;};
-context.video.removeAttribute=name=>{if(name==='src')context.video.src='';};
-context.start(0,false);
-assert.equal(context.video.src,'');
-assert.equal(context.started,false);
-assert.match(context.message,/Safari cannot play the original MKV/);
+for(const hls of [true,false]){
+ context.video.canPlayType=mime=>mime==='application/vnd.apple.mpegurl'&&hls?'probably':'';
+ context.quality='source';context.message='';
+ context.start(0,false);
+ assert.equal(context.video.src,'/media/0/movie.strm?playback_id=test');
+ assert.equal(context.started,true);
+ assert.equal(context.message,'');
+ context.fallback=false;
+ context.onError();
+ assert.match(context.message,/Original playback failed/);
+ assert.equal(context.fallback,false);
+ context.quality='auto';
+ context.start(0,false);
+ assert.equal(context.streamIsDirect,false);
+ assert.match(context.video.src,/\/transcode\//);
+ assert.equal(new URLSearchParams(context.video.src.split('?')[1]).get('format'),hls?'hls':null);
+ assert.equal(context.message,'Starting stream…');
+}
 context.config.media={container:'mov,mp4'};
 context.quality='auto';
-console.log('Safari: MKV conversion selects HLS; unsupported Original explains Auto; other codec choices preserved.');
+console.log('MKV: Original always attempts playback; only real media errors show failure; Auto converts with or without HLS.');
 
 // Seeking within the transcoded buffer must not reopen FFmpeg or the mount.
 for (const name of ['logicalTime', 'go']) {

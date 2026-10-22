@@ -71,10 +71,6 @@ function start(at=0,autoplay=true){
  if(quality==='source'){videoCodec='auto';audioCodec='auto';videoCodecSelect.value='auto';if(audioCodecSelect)audioCodecSelect.value='auto';if(audioSelect)audioSelect.selectedIndex=0;forceTranscode=false;}
  streamIsDirect=usingDirect();updateQualityInfo();
  if(streamIsDirect){
-  if(nativeHls()&&config.media?.container?.split(',').includes('matroska')){
-   video.pause();video.removeAttribute('src');video.load();started=false;
-   msg('Safari cannot play the original MKV container. Choose Auto in playback settings to convert it.');showControls();return;
-  }
   newRequest();subtitles(0,at);video.src=config.nativeUrl+'?'+new URLSearchParams({playback_id:playbackId});video.load();
   metadataSeek=()=>{metadataSeek=null;if(at>0)try{video.currentTime=at;}catch(_){}};
   if(video.readyState>=1)metadataSeek();else video.addEventListener('loadedmetadata',metadataSeek,{once:true});
