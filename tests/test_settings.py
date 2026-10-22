@@ -64,6 +64,63 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(server.load_settings()['default_quality'], 'audio_only')
         self.assertIn(b'Original video', response.data)
 
+    def test_nzbdav_ui_save_preserves_and_clears_password_without_connecting(self):
+        data = self.form(nzbdav_url='https://dav.example:8443/webdav/', nzbdav_user='viewer',
+                         nzbdav_password='Private DAV secret=123', nzbdav_root='content/movies', nzbdav_ram_cache_mb='512')
+        with patch.object(server, 'MediaService') as service:
+            response = self.client.post('/settings', data=data, follow_redirects=True)
+            service.assert_not_called()
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b'Private DAV secret', response.data)
+        values = server.load_settings()
+        self.assertEqual(values['nzbdav_url'], 'https://dav.example:8443/webdav/')
+        self.assertEqual(values['nzbdav_root'], 'content/movies')
+        self.assertEqual(values['nzbdav_ram_cache_mb'], '512')
+        self.assertEqual(values['nzbdav_password'], 'Private DAV secret=123')
+        self.assertIn(b'name="nzbdav_password"', response.data)
+        self.assertIn(b'A password is saved', response.data)
+        # A blank password preserves it even when other fields change.
+        self.assertEqual(self.client.post('/settings', data=self.form(nzbdav_password='', nzbdav_root='content/tv')).status_code, 302)
+        self.assertEqual(server.load_settings()['nzbdav_password'], 'Private DAV secret=123')
+        self.assertEqual(self.client.post('/settings', data=self.form(nzbdav_password='Replacement secret')).status_code, 302)
+        self.assertEqual(server.load_settings()['nzbdav_password'], 'Replacement secret')
+        self.assertEqual(self.client.post('/settings', data=self.form(nzbdav_clear_password='1')).status_code, 302)
+        self.assertEqual(server.load_settings()['nzbdav_password'], '')
+        # Clearing the URL disables integration but retains the other values.
+        self.assertEqual(self.client.post('/settings', data=self.form(nzbdav_url='')).status_code, 302)
+        self.assertEqual(server.load_settings()['nzbdav_url'], '')
+        self.assertEqual(server.load_settings()['nzbdav_root'], 'content/tv')
+
+    def test_invalid_nzbdav_values_leave_file_intact_and_keep_nonsecret_edits(self):
+        invalid = [dict(nzbdav_url='ftp://dav.example/'), dict(nzbdav_url='https://dav.example:99999/'),
+                   dict(nzbdav_url='https://user:secret@dav.example/'), dict(nzbdav_url='https://dav.example/?token=x'),
+                   dict(nzbdav_ram_cache_mb='7'), dict(nzbdav_ram_cache_mb='16385'), dict(nzbdav_ram_cache_mb='256.5'),
+                   dict(nzbdav_root='../outside'), dict(nzbdav_root='content\\movies'),
+                   dict(nzbdav_user='user\nport=99'), dict(nzbdav_password='secret\nport=99'),
+                   dict(nzbdav_password='New secret', nzbdav_clear_password='1')]
+        for fields in invalid:
+            with self.subTest(fields=list(fields)):
+                before = self.config.read_bytes()
+                response = self.client.post('/settings', data=self.form(**fields))
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(self.config.read_bytes(), before)
+                self.assertNotIn(b'value="New secret"', response.data)
+                self.assertNotIn(b'user:secret@', response.data)
+                self.assertNotIn(b'token=x', response.data)
+        response = self.client.post('/settings', data=self.form(nzbdav_url='https://dav.example/',
+                                        nzbdav_user='my-user', nzbdav_root='media', nzbdav_ram_cache_mb='0'))
+        self.assertIn(b'value="https://dav.example/"', response.data)
+        self.assertIn(b'value="my-user"', response.data)
+
+    def test_failed_write_does_not_change_nzbdav_configuration_or_expose_new_password(self):
+        before = self.config.read_bytes()
+        data = self.form(nzbdav_url='https://dav.example/', nzbdav_password='Unsaved private secret')
+        with patch.object(server.os, 'replace', side_effect=OSError('read only')):
+            response = self.client.post('/settings', data=data)
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertNotIn(b'Unsaved private secret', response.data)
+
     def test_csrf_and_stale_page(self):
         data = self.form()
         before = self.config.read_bytes()

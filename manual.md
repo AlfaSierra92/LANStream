@@ -199,7 +199,17 @@ For build instructions see [README-WINDOWS.txt](README-WINDOWS.txt).
 ## Settings and first use
 
 Settings controls the launcher/Flask port, preferred backend, default player
-quality, access mode, roots and profile passwords/exclusions.
+quality, access mode, roots, profile passwords/exclusions and NZBDAV connection/cache settings.
+
+| Section | Controls |
+| --- | --- |
+| Server | Startup port and preferred video transcoder. |
+| Playback quality | Default quality for new players, including original video with audio-only conversion. |
+| Access & media | Access mode, shared/profile passwords, local roots and profile exclusions. |
+| Access & media → NZBDAV · remote media | WebDAV URL, username/password, relative root and RAM cache budget. |
+
+The `tone_mapping` curve selector remains a config.txt option, rather than a web
+form control. The configuration reference distinguishes its choices and requirements.
 
 Paths must be absolute server paths; Docker paths refer to the container.
 Do not put URLs or configuration directives into folder fields.
@@ -210,7 +220,7 @@ modes replaces the corresponding library layout; inspect the intended result.
 
 Saving uses a concurrent-change check and atomic file replacement.
 If another editor changed the file after you opened Settings, reload the page.
-Comments, unknown options and existing NZBDAV fields are preserved, although the
+Comments and unknown options are preserved, although the
 file's formatting/layout may change.
 
 Port changes need a restart. Docker mappings must be changed separately.
@@ -325,6 +335,8 @@ They do not automatically enter the NZBDAV block cache.
 FFmpeg selects the first video stream and requested audio track, applies output
 settings and writes fragmented MP4 directly into the HTTP response.
 
+### Original video with audio conversion
+
 **Original video · convert audio only** copies H.264, HEVC or AV1 video packets
 into fragmented MP4 and converts only the selected audio. The default is AAC
 stereo, 48 kHz, 192 Kbps; the player also offers available Opus/MP3 encoders.
@@ -335,6 +347,23 @@ than byte-for-byte original-file delivery. Unsupported codecs fail explicitly;
 the player never automatically starts video encoding. Video without audio is
 remuxed without invoking an audio encoder. Passthrough seeks can align to video
 keyframes rather than the exact requested frame.
+
+To make this the persistent default:
+
+1. Open **Settings → Playback quality → Default quality**.
+2. Choose **Original video · convert audio only** and save.
+3. Open a new video player. In an already-open player, choose that quality from
+   the gear menu instead; saving does not change a running session.
+4. Select the desired audio track and, optionally, another available audio codec.
+
+The file equivalent is `default_quality=audio_only`. Playback info reports
+**Direct stream · audio conversion**, the original video codec/bitrate target,
+**Video passthrough · audio conversion** as the processing path, and tone mapping
+off. This mode does not test or require a video encoder, Vulkan or OpenCL.
+It converts audio even if the source audio codec was already browser-compatible.
+Converted audio is stereo; multichannel/Atmos output is not retained.
+
+### Seeking and switching streams
 
 If a seek destination is already buffered in the browser, the player reuses it.
 A seek outside that buffer can start a new FFmpeg request at the new position.
@@ -379,10 +408,14 @@ Auto transcoding uses 160 Kbps audio; source-resolution conversion uses 192 Kbps
 Original preserves the source bitrate. Save a default in Settings/default_quality.
 
 The video menu offers H.264, HEVC/H.265 and AV1; audio offers AAC, Opus and MP3.
-Opening settings checks server encoders and the browser's declared MP4 support.
+Opening the player's gear menu checks server encoders and the browser's declared
+MP4 support. In audio-only mode, this queries audio encoders without testing
+video encoders; the video codec control is locked to original video.
 Unavailable options are disabled.
 
-An explicit codec forces conversion. Switching quality, codec or audio preserves
+An explicit video codec forces video conversion in modes that allow it. In
+audio-only mode, choosing an audio codec affects only audio. Switching quality,
+codec or audio preserves
 position and paused state but may open a new transcoding response.
 
 Unavailable VAAPI output codecs do not fall back to CPU.
@@ -424,6 +457,10 @@ A vainfo VLD entry indicates decoding support; EncSlice indicates encoding.
 Neither proves every processing operation.
 Check the same device, permissions and FFmpeg environment used by the server.
 
+These GPU requirements apply to video re-encoding. Original delivery and
+audio-only conversion do not decode or encode video on the server. Low or zero
+GPU use in those modes is expected; the browser decodes the original video.
+
 QSV/NVENC/AMF currently keep decoding and filters in software and accelerate
 encoding. Their tone mapping also uses CPU.
 
@@ -435,8 +472,9 @@ the original video, preserving its HDR rather than running this conversion.
 SDR input, including 10-bit SDR, is not identified as HDR just from bit depth.
 
 PQ/smpte2084 identifies HDR10-style input.
-HLG/arib-std-b67 is handled by the software processing path.
-VAAPI uses tonemap_vaapi for PQ and rejects HLG rather than silently using CPU.
+HLG/arib-std-b67 is handled by the software, libplacebo or OpenCL processing paths.
+The default VAAPI mapper uses tonemap_vaapi for PQ and rejects HLG rather than
+silently using CPU.
 Alternatively, set tone_mapping=libplacebo-bt2390, libplacebo-mobius or
 libplacebo-reinhard in config.txt. These modes accept PQ/HLG and map GPU surfaces
 through Vulkan for tone mapping, back to VAAPI for scaling and encoding.
@@ -459,6 +497,13 @@ compressed HDR10 frame with mastering/content-light information, held in RAM.
 It validates required filters and performs an actual short encode.
 Missing filters or failed driver processing cause an explanatory HTTP 503.
 Activity's retest clears this cache.
+
+FFmpeg's filter list is only an inventory. Vulkan requires a compatible
+libplacebo build and working VAAPI/Vulkan mappings; OpenCL requires a GPU runtime
+with VAAPI media sharing. The standard Dockerfile does not install an Intel
+OpenCL compute runtime. A failed optional path stops conversion instead of
+silently moving video processing to CPU. See the
+[diagnostics and compatibility notes](docs/troubleshooting.md#hdr-conversion-fails-or-colors-look-wrong).
 
 This synthetic check does not certify every input resolution or metadata variant.
 VAAPI tonemap_vaapi requires mastering-display information in the decoded HDR10
@@ -513,7 +558,17 @@ video continues independently. Subtitle selection does not restart video.
 
 ### Connect directly
 
-Set these values in the active configuration:
+The web UI is the usual starting point:
+
+1. Sign in as the administrator when using password profiles.
+2. Open **Settings → Access & media → NZBDAV · remote media**.
+3. Enter the final WebDAV URL, credentials, remote root and RAM budget.
+4. Save, return to Media and open the NZBDAV library to verify access.
+
+Saving validates syntax only; a successful save does not certify connectivity,
+credentials or HTTP Range support. Use the URL as seen by the server/container,
+not merely an address reachable by the browser device. No mount path belongs in
+this section. The equivalent values in the active configuration are:
 
 ```ini
 nzbdav_url=http://nzbdav.example:3000/
@@ -529,15 +584,25 @@ Root is relative to the endpoint; empty exposes its root.
 The example content directory must match the actual server layout.
 
 An empty URL disables integration.
-Only the administrator sees/accesses this library, including in profile mode.
+In profile mode only the administrator sees/accesses this library. With a shared
+password, or no password, all users of that mode have administrative access.
 The integration lists folders and videos, not remote STRM pointers or the other viewers.
 
 The backend must support PROPFIND, HEAD, Content-Length and byte ranges.
 The client does not follow redirects or use environment proxies.
 Use a directly reachable final endpoint.
 
-NZBDAV fields are currently edited in config.txt, not a dedicated Settings form.
-Settings preserves them when saving other options.
+Configure NZBDAV in **Settings → Access & media → NZBDAV · remote media**, or
+edit the same keys in config.txt. The form includes URL, WebDAV username/password,
+relative remote root and RAM cache size. Leaving the password blank preserves
+the saved value; use the removal checkbox to clear it. Saved/new passwords are
+never inserted into returned HTML. A blank URL disables the integration.
+Do not enter a new password and select removal at the same time: the form
+rejects that conflict. Disabling the URL retains the other connection values,
+so they can be reused later. Passwords/credentials cannot contain line breaks,
+control characters or surrounding whitespace in the stored file format.
+Saving validates URL/root syntax and the 8–16384 MiB RAM range without contacting
+the upstream server, so an offline service can be configured in advance.
 Changes recreate the remote service/cache at the next NZBDAV access and interrupt
 streams using the old service.
 
@@ -660,6 +725,8 @@ Activity at /transcoder-status describes the server.
 
 The player shows method/reason, output codecs, displayed dimensions, bitrate
 targets, actual encoder, tone-mapping path and subtitles.
+For audio-only conversion it explicitly identifies video passthrough; the video
+target remains Original, while the audio target reflects the selected encoder.
 It also shows buffer ahead, displayed FPS, dropped frames, transfer rate,
 request bytes and original source properties.
 

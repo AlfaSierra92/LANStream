@@ -390,12 +390,35 @@ class WebDAVPath:
         return self.service.input_url(self.service.client.stat(self.path))
 
 
+def validate_config(url, username='', password='', root='', cache_mb=256):
+    """Validate stored/UI values without connecting or allocating a service."""
+    if not 8 <= cache_mb <= 16384:
+        raise ValueError('NZBDAV RAM cache must be between 8 and 16384 MiB.')
+    for label, value in [('URL', url), ('username', username), ('password', password), ('root', root)]:
+        if any(ord(c) < 32 or ord(c) == 127 for c in value):
+            raise ValueError(f'NZBDAV {label} cannot contain control characters or line breaks.')
+        if value != value.strip():
+            raise ValueError(f'NZBDAV {label} cannot start or end with whitespace.')
+    if url:
+        try:
+            parsed = urlsplit(url)
+            port = parsed.port
+            valid = (parsed.scheme in {'http', 'https'} and parsed.hostname and
+                     parsed.username is None and parsed.password is None and
+                     not parsed.query and not parsed.fragment and
+                     not any(c.isspace() for c in url) and '\\' not in url and
+                     (port is None or 1 <= port <= 65535))
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ValueError('NZBDAV URL must be HTTP(S) with a hostname and valid port, without embedded credentials, query parameters or fragments.')
+    if '\\' in root or any(part in {'.', '..'} for part in root.strip('/').split('/')):
+        raise ValueError('NZBDAV root must stay inside the configured WebDAV endpoint.')
+
+
 class MediaService:
     def __init__(self, url, username='', password='', root='', cache_mb=256):
-        if not 8 <= cache_mb <= 16384:
-            raise ValueError("nzbdav_ram_cache_mb must be between 8 and 16384.")
-        if '\\' in root or any(part in {'.', '..'} for part in root.strip('/').split('/')):
-            raise ValueError("nzbdav_root must stay inside the configured WebDAV endpoint.")
+        validate_config(url, username, password, root, cache_mb)
         self.client = WebDAV(url, username, password)
         self.root = root.strip('/')
         self.cache = BlockCache(cache_mb * 1024 * 1024)

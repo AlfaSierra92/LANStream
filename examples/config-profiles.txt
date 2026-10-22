@@ -4,6 +4,8 @@ port=8060
 use_master_password=false
 transcoder=auto
 default_quality=auto
+# Use audio_only to preserve video and convert audio; requires client video/HDR support.
+# NZBDAV is configured globally in the administrator's Access & media settings.
 
 <CHANGE_THIS_ADMIN_PASSWORD>
 /media/Movies

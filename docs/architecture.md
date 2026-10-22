@@ -39,12 +39,17 @@ flowchart TD
     L --> F["FFmpeg / FFprobe"]
     C --> G["Loopback HTTP gateway"]
     G --> F
-    F --> T["Fragmented MP4 or metadata"]
+    F --> M["FFprobe metadata"]
+    F -->|Video conversion| V["Video encoder + audio encoder"]
+    F -->|quality=audio_only| P["Original video packets + audio encoder"]
+    V --> T["Fragmented MP4"]
+    P --> T
     D --> B
     T --> B
+    M --> A
 ```
 
-FFprobe can precede either original delivery or transcoding.
+FFprobe can precede original delivery, audio-only conversion or video transcoding.
 STRM HTTP targets take a separate remote-reading path; the NZBDAV cache does not
 automatically cache arbitrary URLs. Native HLS can redirect clients upstream.
 
@@ -65,6 +70,26 @@ Videos do not trigger thumbnail extraction or folder preview scans.
 
 The first password profile owns Settings and integrated NZBDAV.
 Status routes remain server-wide views, rather than per-library content listings.
+
+## Settings persistence and remote reconfiguration
+
+/settings uses the administrator gate, session CSRF token and a revision hash of
+the active config file. Server, default-quality, access/library and NZBDAV fields
+are validated before any write. NZBDAV's shared validate_config helper checks
+URL/port, root confinement, control characters and the 8–16384 MiB cache range
+without constructing a MediaService or contacting WebDAV.
+
+The save retains comments/unknown keys, serializes known settings and selected
+libraries, writes a same-directory temporary file, then atomically replaces the
+active file. A blank NZBDAV password preserves the stored value; an explicit
+removal checkbox clears it, and a replacement/removal conflict fails validation.
+Passwords are not placed in HTML values or echoed in validation errors.
+
+NZBDAV connection settings form a configuration tuple read on the next remote
+access. If it changes, nzbdav_service creates the replacement, closes the previous
+service and drops its RAM cache/connections. Other workers notice the shared file
+on their own next request. Existing streams using a closed service may stop;
+this is not seamless connection migration. Saving itself is not a connectivity test.
 
 ## Metadata probing
 
@@ -117,7 +142,9 @@ encoder=copy and tone mapping off. No automatic video encoding fallback occurs.
 The response reads its pipe and sends bytes to the browser while a separate thread
 drains stderr. There is no persistent encoded output movie.
 
-The GOP setting is 48. Short fragments allow progressive delivery.
+For video re-encoding the GOP setting is 48. Audio-only conversion retains source
+keyframe spacing and bitrate; it cannot impose a smaller GOP or resolution.
+Short fragments allow progressive delivery, but cannot create source keyframes.
 Limited presets configure video bitrate/maxrate/buffer; unrestricted profiles use
 backend-specific quality controls.
 Audio is converted to stereo at 48 kHz.
@@ -308,12 +335,12 @@ Content indices refer to roots in the current profile, not universal media IDs.
 | --- | --- |
 | / | Libraries. |
 | /login, /logout | Session access. |
-| /settings | Administrative configuration read/save. |
+| /settings | Administrative configuration read/save, including NZBDAV. |
 | /browse/&lt;index&gt;/&lt;path&gt; | Current folder. |
 | /video/&lt;index&gt;/&lt;path&gt; | Video details. |
 | /play/&lt;index&gt;/&lt;path&gt; | Player. |
 | /media/&lt;index&gt;/&lt;path&gt; | Original bytes/STRM relay. |
-| /transcode/&lt;index&gt;/&lt;path&gt; | Live fragmented MP4 output. |
+| /transcode/&lt;index&gt;/&lt;path&gt; | Fragmented MP4: quality=audio_only copies video; other conversion profiles re-encode it. |
 | /subtitle/&lt;index&gt;/&lt;path&gt; | WebVTT window. |
 | /image/, /image-file/ | Image viewer/data. |
 | /document/, /document-page/ | Document viewer/page images. |
@@ -345,17 +372,23 @@ node tests/test_player.js
 node tests/test_subtitles.js
 ```
 
-Tests cover settings/access, STRM, quality/codecs, ranges, RAM bounds, subtitles,
-tone mapping and shutdown. Some require permission to open loopback sockets.
+Tests cover settings/access and secret retention, STRM, quality/codecs, audio-only
+packet preservation, ranges, RAM bounds, subtitles, tone mapping and shutdown.
+Some require permission to open loopback sockets.
 
 Real codec tests require the relevant encoders.
 Real CPU HDR tests require zscale/libzimg.
 Real VAAPI tests require an accessible Linux render device.
-Missing prerequisites produce skips, not hardware certification.
+The tone-mapping suite also attempts Vulkan/libplacebo and OpenCL pipelines on
+hosts with a render device; those tests require their optional drivers/runtimes
+and VAAPI sharing. Missing tools/platforms can produce skips; a pipeline that is
+attempted and fails produces a test failure. Skips are not hardware certification.
 
 ```bash
 python -m unittest discover -s tests -p test_vaapi.py -v
 python -m unittest discover -s tests -p test_tone_mapping.py -v
+python -m unittest discover -s tests -p test_audio_only.py -v
+python -m unittest discover -s tests -p test_settings.py -v
 ```
 
 The HDR tests check output BT.709 tags and absence of stale HDR frame/stream metadata.

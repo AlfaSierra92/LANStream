@@ -1,6 +1,8 @@
 # NZBDAV-only example. Replace endpoint and WebDAV credentials.
 # No rclone, FUSE or disk video cache is required.
 # Passwordless access also permits server administration.
+# Edit these connection values here or in Settings -> Access & media -> NZBDAV.
+# Use default_quality=audio_only to copy video and convert audio; the client handles HDR.
 port=8060
 use_master_password=false
 master_password=
@@ -14,4 +16,5 @@ nzbdav_ram_cache_mb=256
 
 # On Linux, explicitly request the VAAPI pipeline with transcoder=vaapi.
 # Verify the render device and actual backend in Activity.
-# HDR10 transcoding automatically uses GPU tone mapping when supported.
+# HDR10 video re-encoding uses GPU tone mapping when the selected VAAPI path works.
+# This applies to video re-encoding; audio_only bypasses tone mapping.

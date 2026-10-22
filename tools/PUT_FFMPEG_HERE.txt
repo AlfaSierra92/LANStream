@@ -7,6 +7,9 @@ Place these Windows executables in this directory:
 
 Prefer matching tools from the same compatible FFmpeg build.
 CPU HDR-to-SDR conversion requires zscale/libzimg and tonemap in that build.
+Original video with audio-only conversion uses -c:v copy and does not require
+video encoders or HDR filters. The browser must support the original video;
+the selected AAC/Opus/MP3 audio encoder must still be available.
 
 build_windows.bat also requires a CBR backend:
     7zz.exe

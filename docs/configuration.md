@@ -39,6 +39,35 @@ Unknown settings are not automatically implemented merely because they are prese
 | nzbdav_root | empty | Subdirectory relative to the WebDAV endpoint. |
 | nzbdav_ram_cache_mb | 256 | RAM block-cache budget per worker, in MiB. |
 
+The NZBDAV keys can also be edited in **Settings → Access & media → NZBDAV ·
+remote media**. A blank password field preserves the saved password; an explicit
+removal checkbox clears it. The saved password is never rendered in the page.
+Clear the URL to disable the integration. Saving validates syntax, control
+characters, remote-root boundaries and RAM limits without contacting WebDAV.
+Do not put credentials in the URL; use the dedicated fields. Invalid URL
+credentials/query tokens are not reflected back into a failed form.
+
+### Settings UI and password behavior
+
+| Web UI location | Stored keys |
+| --- | --- |
+| Server | port, transcoder |
+| Playback quality → Default quality | default_quality |
+| Access & media | use_master_password, master_password; library/profile lines |
+| Access & media → NZBDAV · remote media | nzbdav_url, nzbdav_user, nzbdav_password, nzbdav_root, nzbdav_ram_cache_mb |
+
+The curve selector `tone_mapping` remains file-only and is preserved when the UI
+saves other settings. An omitted NZBDAV form field preserves its existing value.
+For the NZBDAV password, an empty input also preserves the existing secret;
+**Remove saved WebDAV password** explicitly writes an empty value. Entering a
+replacement password while selecting removal is rejected. Clearing the URL
+disables remote access without erasing username, password, root or cache budget.
+
+Save failures keep nonsecret edits on screen. New passwords must be entered again.
+A changed file revision rejects the save rather than overwriting another editor's
+changes. Only administrators receive this form: all users in passwordless/shared
+password modes, or the first profile in profile mode.
+
 The supplied configuration may explicitly set different values, such as
 nzbdav_root=content. Code defaults apply when a key is absent.
 
@@ -71,6 +100,10 @@ The player also offers this mode and lets you change audio track/codec. The
 browser must decode the original video and handle HDR itself. It never falls
 back to video encoding in this mode; GPU encoder/tone-mapping availability is
 irrelevant. Unsupported video codecs require a different quality profile.
+This is fragmented-MP4 remuxing with `-c:v copy`, not byte-for-byte delivery of the
+source container. Audio track/codec controls remain available; video controls are
+locked to passthrough. No audio track means video-only remuxing. Seeking can align
+to source keyframes. The mode is explicit; Auto does not automatically choose it.
 See the [quality table](../manual.md#quality-and-codecs).
 
 ### Transcoder selection
@@ -126,7 +159,8 @@ by this OpenCL kernel. Unsupported combinations fail before encoding.
 
 There is no automatic CPU or VAAPI tone-mapper fallback on failure. To restore
 the original curve, set tone_mapping=vaapi. Settings preserves this file-only key.
-Restart after editing the file and reopen playback. Compare the same scene;
+Reopen playback after editing the file. Retest in Activity or restart after
+changing FFmpeg/drivers to clear cached capability failures. Compare the same scene;
 another curve is not guaranteed to brighten a particular movie or display.
 Other backends use zscale and the CPU Hable operator for PQ/HLG.
 
@@ -141,9 +175,10 @@ that base layer. Profile 8 HLG-compatible input can use libplacebo, OpenCL or th
 Profile 5 and other unsupported proprietary combinations are rejected.
 This is not full Dolby Vision processing.
 
-Original mode is the way to deliver HDR unchanged to a compatible client.
-There is no separate HDR-preserving transcode mode. Curve selection is a global
-configuration setting rather than a per-player control.
+Original mode delivers the complete source unchanged. Audio-only conversion
+preserves video/HDR while remuxing the container and replacing audio. There is
+no HDR-preserving video re-encoding mode. Curve selection applies to VAAPI video
+re-encoding only; other video backends retain the CPU Hable path.
 
 ## Libraries without profile sections
 
@@ -240,6 +275,12 @@ nzbdav_ram_cache_mb=256
 | Root | Relative endpoint path using /; no dot segments or backslashes. |
 | Cache | Integer 8–16384 MiB, rounded down to complete 4 MiB blocks. |
 
+Use the NZBDAV subsection under Access & media, not the local Media folders text
+area. The remote root is relative to the URL; a local absolute media path belongs
+in the local library fields instead. Values cannot contain control characters or
+surrounding whitespace. The UI validates numeric ports and accepts offline
+endpoints; actual WebDAV access is checked when opening the remote library.
+
 A 258 MiB setting provides 256 MiB of block capacity.
 Stored blocks and in-flight reservations count toward the budget; total process
 memory and swap do not.
@@ -252,8 +293,9 @@ The backend must support PROPFIND, HEAD, Content-Length and byte ranges.
 Use its final URL: the client follows neither redirects nor environment proxies.
 These settings do not create a mount or start rclone.
 
-The library is administrator-only. There is currently no separate list of
-NZBDAV roots per restricted profile.
+The library is administrator-only in profile mode. In passwordless/shared-password
+mode all users have administrative access. There is no separate list of NZBDAV
+roots per restricted profile.
 
 ## Environment variables
 
@@ -271,7 +313,7 @@ Set these before starting the process:
 | LANSTREAM_VAAPI_DEVICE | VAAPI render node, default /dev/dri/renderD128. |
 
 There are no LANSTREAM_NZBDAV_* variables in the current application.
-NZBDAV settings come from config.txt.
+NZBDAV settings come from config.txt, including values saved there by the web UI.
 
 A stable session secret preserves the cookie signature across restarts.
 It is not a login password. Multiple processes need the same secret to validate
@@ -287,6 +329,7 @@ There is no LANSTREAM_FFMPEG override or automatic ffmpeg-nvenc.exe selection.
 | --- | --- |
 | Roots, sections and exclusions in the file | Read on subsequent requests; removed/changed profiles can invalidate access. |
 | default_quality | New player pages only. |
+| tone_mapping | New video-conversion requests; capability tests are cached by backend/mode. Existing streams keep their running command. |
 | NZBDAV settings | Checked on the next NZBDAV access; changes recreate the service/cache and interrupt its streams. |
 | Shared password/switch/backend saved in Settings | Also updates the saving process's runtime state. |
 | Those same settings edited manually | Restart to update values initialized at process startup. |
@@ -295,7 +338,7 @@ There is no LANSTREAM_FFMPEG override or automatic ffmpeg-nvenc.exe selection.
 | Python/templates/player scripts in Docker | Rebuild and recreate the container, then reload open players. |
 
 An environment override continues to win after a Settings save.
-Settings preserves unknown options/comments and existing NZBDAV settings,
+Settings preserves unknown options/comments and updates NZBDAV values from its form,
 but rewrites the library layout for the selected access mode.
 It does not guarantee preservation of the original file formatting.
 
@@ -343,6 +386,6 @@ low_bandwidth_resolution and low_bandwidth_bitrate no longer control current
 quality profiles. The legacy low=1 playback query maps to 480p.
 
 The bundled LEC module predates newer settings. Its save reconstructs only known
-keys and can remove default_quality and NZBDAV settings.
+keys and can remove default_quality, tone_mapping and NZBDAV settings.
 Read [INSTALL-LEC.txt](../INSTALL-LEC.txt) before editing current configurations
 through that module.

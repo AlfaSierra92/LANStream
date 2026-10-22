@@ -64,13 +64,16 @@ The module predates current quality profiles and integrated NZBDAV.
 Its historical Low Bandwidth controls no longer govern current playback quality.
 
 Its render_config reconstructs settings it recognizes.
-Saving through this module can remove default_quality and the nzbdav_url,
+Saving through this module can remove default_quality, tone_mapping and the nzbdav_url,
 nzbdav_user, nzbdav_password, nzbdav_root and nzbdav_ram_cache_mb fields.
 
 For current configurations:
 - back up the file before saving through the module;
 - use LANStream Settings for supported web controls;
-- configure NZBDAV directly in the effective file;
+- configure NZBDAV in LANStream Settings -> Access & media -> NZBDAV · remote media,
+  or edit the same keys in the effective file;
+- select Original video · convert audio only in Settings -> Playback quality
+  to preserve video and convert audio (default_quality=audio_only);
 - use module status/open/restart without resaving if you need to preserve fields
   the module does not know.
 
@@ -100,14 +103,28 @@ The VAAPI path keeps video decode, pixel conversion, resizing, supported HDR10/P
 tone mapping and encoding on the GPU.
 Audio, networking and containers still use CPU.
 
-HDR10 transcoding automatically produces SDR BT.709.
+HDR10 video re-encoding automatically produces SDR BT.709.
 Tone mapping is capability-tested separately from HEVC decoding.
 A driver can support HEVC Main 10 decoding without HDR processing.
 A failed hardware tone-mapping path does not silently fall back to CPU.
 Original delivery is unchanged; unsupported Dolby Vision profiles are not converted.
+Audio-only conversion copies source video into fragmented MP4 without tone mapping
+or video encoder checks; its default audio output is AAC stereo at 48 kHz/192 Kbps.
+The browser must support the original video/HDR. Video passthrough does not
+silently fall back to video encoding if the browser rejects it.
+
+The tone_mapping config.txt option offers VAAPI, libplacebo/Vulkan and OpenCL
+paths; it is not exposed in the current web form. Optional paths require their
+own drivers/runtime and working sharing with VAAPI. The standard Docker image
+does not install the Intel OpenCL compute runtime. See docs/troubleshooting.md
+for FFmpeg 9/libplacebo queue compatibility and OpenCL device-selection failures.
 
 Integrated NZBDAV uses a bounded RAM-only video block cache without rclone.
 The /cache directory contains separate graphics derivatives and can use disk.
+The WebDAV UI validates settings without contacting the upstream. A blank
+password preserves the saved secret; its removal checkbox clears it. A blank URL
+disables the integration. Changes recreate connections/cache on the next remote
+access and can interrupt existing remote streams.
 
 Check Activity/Playback info for the actual backend and tone-mapping path.
 Do not infer successful acceleration solely from transcoder= in the file.

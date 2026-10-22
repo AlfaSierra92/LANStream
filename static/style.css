@@ -82,6 +82,10 @@ button.viewer-nav:disabled{opacity:.2;cursor:default}
 .profile-card{min-width:0;margin:20px 0;padding:18px;border:1px solid var(--border);border-radius:8px}.profile-card legend{padding:0 8px;color:var(--muted)}
 .settings-notice{padding:16px;margin:16px 0;border:1px solid var(--border);border-radius:8px;background:var(--surface2);line-height:1.5;overflow-wrap:anywhere}
 .settings-actions{display:flex;align-items:center;gap:24px}.settings-actions .primary{width:auto;margin:0;min-width:160px}
+.settings-subsection{min-width:0;margin:28px 0 0;padding:20px 0 0;border:0;border-top:1px solid var(--border)}
+.settings-subsection legend{padding:0 12px 0 0;color:var(--text);font-size:1.05rem;font-weight:600}
+.settings-card .settings-checkbox{display:flex;align-items:center;gap:10px;font-weight:400;font-size:.9rem}
+.settings-card .settings-checkbox input[type=checkbox]{width:auto;flex:none;margin:0;padding:0;accent-color:#82b6f3}
 @media(max-width:600px){.settings-grid{grid-template-columns:1fr;gap:0}.settings-card{padding:18px}.topbar-actions{gap:10px;font-size:.85rem}}
 
 /* Library and playback refresh */

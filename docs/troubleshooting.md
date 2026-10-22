@@ -45,6 +45,13 @@ Reload Settings if another editor/tab changed the configuration after it opened.
 Environment overrides continue to win after saving.
 Changing port= does not alter Gunicorn's bind or Docker's mapping.
 
+NZBDAV is edited under **Access & media → NZBDAV · remote media**, separately
+from local folder paths. Saving checks URL/root/RAM syntax without connecting.
+Correct validation errors before saving; an invalid form never replaces config.txt.
+Passwords are not filled back in after an error. A blank WebDAV password preserves
+the saved value; to remove it use the removal checkbox, without also entering a
+new password. A blank URL disables remote media but keeps the other saved fields.
+
 ## Unexpected password behavior
 
 Profile sections activate authentication independently of use_master_password.
@@ -57,7 +64,8 @@ The default random signing secret normally requires login again after restart.
 
 ## NZBDAV is missing or cannot list files
 
-Check nzbdav_url and use the administrator profile.
+Check the URL in **Settings → Access & media → NZBDAV · remote media** (stored as
+nzbdav_url) and use the administrator profile when profiles are enabled.
 The integrated library is not available to restricted profiles.
 
 Use the final WebDAV endpoint, not the UI or rclone RC endpoint.
@@ -68,6 +76,32 @@ The client does not follow redirects or environment proxies.
 Test reachability from the LANStream process/container environment.
 Browser reachability alone proves little about container networking.
 Changing NZBDAV settings recreates its cache/connections at the next access.
+Saving successfully does not prove the upstream is reachable or accepts the
+credentials. Open the NZBDAV library after saving to check actual access.
+After a connection/root/RAM change, restart affected playback requests if the old
+connection was closed. No application restart is needed just to change these fields.
+
+## Original video with audio-only conversion
+
+Select **Original video · convert audio only** in the player's quality menu, or
+save it under **Settings → Playback quality → Default quality** for new players.
+The file value is `default_quality=audio_only`. Auto does not choose this mode
+automatically, and saving a new default does not change an already-open player.
+
+Playback info should show **Direct stream · audio conversion**, original video,
+and tone mapping off. FFmpeg should use `-c:v copy` and an audio encoder such as
+`-c:a aac`, with no video filters or hardware decoder. Low/zero GPU use is expected.
+
+| Symptom | Check |
+| --- | --- |
+| Playback still invokes h264_vaapi or tone mapping | Choose the audio-only quality explicitly or reopen the player after saving the default; deploy Python/templates/player.js together. |
+| Browser rejects video without a server error | The original H.264/HEVC/AV1 codec, profile or HDR rendition may be unsupported; select a video-conversion profile manually if needed. |
+| HTTP 415 before remuxing | The source video is outside the supported H.264/HEVC/AV1 passthrough set. |
+| Audio encoder unavailable | Check the selected AAC/Opus/MP3 encoder in the actual FFmpeg build; video encoder/VAAPI tests are unrelated. |
+| Seek starts near the requested time | Video packets are copied; source keyframe spacing can constrain the starting frame. |
+| Atmos/multichannel is no longer present | Converted audio is stereo at 48 kHz. Original mode is required to retain the original audio bitstream. |
+
+This mode does not silently switch to video encoding after a browser error.
 
 ## Slow startup
 
@@ -75,9 +109,11 @@ A delay before the player page can be FFprobe reading container metadata.
 A delay after opening it can involve FFmpeg, hardware setup, source reads or the
 browser.
 
-First HDR startup on a backend also performs a cached, in-memory capability test.
+First HDR video-conversion startup on a backend also performs a cached, in-memory capability test.
 This test does not read a user's remote file.
 Later HDR requests reuse its result until retest/restart.
+Audio-only conversion skips video/HDR capability tests, but still needs source
+metadata, any uncached remote bytes, and its selected audio encoder.
 
 NZBDAV cache misses require actual upstream reads.
 A larger cache cannot remove latency for bytes never fetched before.
@@ -96,7 +132,7 @@ On Linux inspect the complete running command:
 pgrep -a ffmpeg
 ```
 
-VAAPI playback should contain:
+VAAPI video re-encoding should contain:
 
 ```text
 -hwaccel vaapi
@@ -220,6 +256,19 @@ are not used. Test from the application's actual environment/container:
 python -c "import app; print(app.tone_mapping_test('vaapi', 'opencl-mobius'))"
 ```
 
+If the log says **No matching devices found** for `opencl=...@...` while VAAPI
+initialization succeeded, the failure is in OpenCL device selection/VAAPI sharing,
+not proof that the video decoder is broken. If clinfo is installed, inspect:
+
+```bash
+clinfo -l
+clinfo | grep -E 'Device Name|cl_intel_va_api_media_sharing'
+```
+
+Check that the expected Intel GPU and VAAPI-sharing extension are exposed to the
+same process/container. A CPU-only OpenCL runtime does not satisfy this pipeline.
+The standard image installs VAAPI drivers, not the Intel OpenCL compute runtime.
+
 Run the exact synthetic test from the project folder using the server's Python
 environment, and share its sanitized diagnostic if the error persists:
 
@@ -248,7 +297,9 @@ three-character flag column in FFmpeg's filter list. Newer FFmpeg versions can
 use two characters. Restart, or retest in Activity after updating, to clear the
 cached failure. This parser issue does not establish a driver limitation.
 
-Playback info should show HDR10/PQ → SDR BT.709 with VAAPI, or the CPU Hable path.
+For video re-encoding, Playback info identifies VAAPI, libplacebo/Vulkan, OpenCL
+or CPU Hable as the selected HDR-to-SDR path. Original/audio-only delivery shows
+tone mapping off and leaves HDR handling to the client.
 Source color transfer remains the original metadata, so it can still say smpte2084
 while the output is correctly SDR.
 
@@ -260,7 +311,9 @@ Check the selected path and the response/log error:
 | Driver lacks HDR-to-SDR processing | HEVC decode support alone is insufficient; verify driver/GPU VPP support. |
 | No mastering-display data | VAAPI needs that metadata on decoded input frames; the fixture passing does not repair an unsuitable source. |
 | Missing zscale/tonemap | CPU HDR conversion needs a build with libzimg/zscale and tonemap. |
-| HLG on VAAPI | Currently rejected instead of falling back to CPU. |
+| HLG with tone_mapping=vaapi | Rejected by the default mapper; optional libplacebo/OpenCL modes or the CPU backend support HLG, subject to their requirements. |
+| Vulkan queue compatibility / libplacebo API below 365 | The FFmpeg 9 guard rejects internally synchronized imported queues; use a compatible FFmpeg/libplacebo build or a separately tested non-Vulkan mode. |
+| OpenCL No matching devices found / -1001 | Verify GPU runtime, ICD/device visibility and VAAPI sharing in the actual application environment. |
 | Dolby Vision Profile 5/unsupported profile | No supported ordinary base layer; use an HDR10 source or Original on a compatible client. |
 | Stale player/server | Deploy tone_mapping.py, app.py, templates and player.js together; rebuild Docker and reload. |
 
@@ -372,11 +425,12 @@ remove the affected cached file and reopen the source.
 
 | Status | Typical causes |
 | --- | --- |
-| 400 | Invalid request parameters, codec/quality or malformed STRM. |
+| 400 | Invalid settings/CSRF/stale form, request parameters, codec/quality or malformed STRM. |
 | 403 | Unauthorized path or restricted Settings/NZBDAV. |
 | 404 | Missing/excluded content. |
 | 409 | Transcoding requested in Original mode. |
-| 415 | Unsupported subtitles/document or unsupported HDR/Dolby conversion plan. |
+| 415 | Unsupported subtitles/document, unsupported video passthrough codec or unsupported HDR/Dolby conversion plan. |
+| 500 | Settings file could not be replaced, or another server error; inspect the retained message/log. |
 | 502 | WebDAV/upstream/probe error. |
 | 503 | Encoder unavailable, missing HDR filters or failed tone-mapping capability test. |
 | 504 | Remote probing/subtitle deadline exceeded. |
@@ -388,6 +442,9 @@ even if the initial HTTP status was successful. Inspect server logs as well.
 
 Include server OS/startup method, actual backend, source type, codec/profile/pixel
 format, selected quality and the failing stage.
+For audio-only requests say whether Playback info reports video passthrough.
+For Settings include the validation message and whether the write failed, without
+sharing passwords, credential-bearing URLs or the complete personal config file.
 Add Playback info and the exact error where available.
 
 Remove passwords, cookies, tokens, private URLs and personal names before sharing.

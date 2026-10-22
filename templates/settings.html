@@ -5,7 +5,7 @@
   <a class="back-link" href="{{ url_for('home') }}">← Media</a>
   <h1>Settings</h1>
   <p class="settings-intro">Manage your server and media folders. Changes are saved to config.txt.</p>
-  {% if saved %}<div class="settings-notice" role="status">Settings saved. Media access and transcoding changes apply immediately. Restart LANStream if you changed the port.</div>{% endif %}
+  {% if saved %}<div class="settings-notice" role="status">Settings saved. Media access and transcoding changes apply immediately. NZBDAV changes apply on the next remote access. Restart LANStream if you changed the port.</div>{% endif %}
   {% if error %}<div class="settings-notice error-box" role="alert">{{ error }} Re-enter any new passwords before saving again.</div>{% endif %}
   {% if overrides %}<div class="settings-notice">Deployment environment variables override saved values: {{ overrides|join(', ') }}. Update your deployment to change these effective settings.</div>{% endif %}
   <form method="post" id="settingsForm">
@@ -48,6 +48,21 @@
         </div>
         <button type="button" id="addProfile">+ Add profile</button>
       </div>
+      <fieldset class="settings-subsection">
+        <legend>NZBDAV · remote media</legend>
+        <p class="settings-help">Connect directly to WebDAV. No rclone mount is needed. The remote library is available to the administrator only when password profiles are enabled.</p>
+        <label>WebDAV URL<input type="url" name="nzbdav_url" value="{{ values.nzbdav_url }}" placeholder="http://nzbdav:3000/" spellcheck="false" autocomplete="off"><small>Use the final HTTP/HTTPS endpoint, without credentials or query parameters. Leave blank to disable NZBDAV.</small></label>
+        <div class="settings-grid">
+          <label>WebDAV username<input type="text" name="nzbdav_user" value="{{ values.nzbdav_user }}" autocomplete="off" spellcheck="false"><small>Leave blank if the endpoint does not require authentication.</small></label>
+          <div>
+            <label>New WebDAV password<input type="password" name="nzbdav_password" autocomplete="new-password" placeholder="{% if values.nzbdav_password %}Leave blank to keep the saved password{% else %}No password saved{% endif %}"><small>{% if values.nzbdav_password %}A password is saved. It is never displayed here.{% else %}Enter a password if required by WebDAV.{% endif %}</small></label>
+            <label class="settings-checkbox"><input type="checkbox" name="nzbdav_clear_password" value="1"> Remove saved WebDAV password</label>
+          </div>
+          <label>Remote root<input type="text" name="nzbdav_root" value="{{ values.nzbdav_root }}" placeholder="content" spellcheck="false"><small>Folder relative to the endpoint. Leave blank for its top level; use / between folders.</small></label>
+          <label>RAM cache · MiB<input type="number" name="nzbdav_ram_cache_mb" min="8" max="16384" step="1" required value="{{ values.nzbdav_ram_cache_mb }}"><small>8–16384 MiB per worker. Media blocks stay in RAM; no video cache is written to disk.</small></label>
+        </div>
+        <p class="settings-help">Saving validates the configuration without contacting the server. Changes recreate the remote connection and RAM cache on its next use and can interrupt active NZBDAV streams.</p>
+      </fieldset>
     </section>
     <div class="settings-actions"><button type="submit" class="primary">Save settings</button><a href="{{ url_for('home') }}">Cancel</a></div>
   </form>

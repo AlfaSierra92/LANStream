@@ -71,6 +71,8 @@ Settings supports a shared password or password profiles with roots/exclusions.
 The first profile is administrator. Passwords remain plain text in config.txt.
 
 Blank password fields preserve existing passwords.
+NZBDAV connection fields are under Settings -> Access & media -> NZBDAV.
+Leave its password blank to keep it, or use Remove saved WebDAV password to clear it.
 Port changes require restart. Restart after manually editing shared-password or
 backend settings to update runtime values initialized at startup.
 
@@ -80,6 +82,12 @@ backend settings to update runtime values initialized at startup.
 Open a library, choose a video and start playback.
 Auto uses original delivery where compatible, otherwise conversion.
 Original disables conversion and may fail on an incompatible browser.
+Original video · convert audio only copies H.264/HEVC/AV1 video into MP4 and
+converts selected audio. The default is AAC stereo, 48 kHz, 192 Kbps. Save it
+under Settings -> Playback quality -> Default quality (default_quality=audio_only).
+New players use that default; an existing player has its own quality selection.
+There is no video encoder/tone-mapping requirement or automatic video fallback
+in this mode. The browser must support the original video and HDR format.
 360p–4K presets and Custom set output size/bitrate targets.
 
 The gear opens quality, codec and track controls.
@@ -109,11 +117,14 @@ Converted audio is stereo at 48 kHz in AAC, Opus or MP3.
 QSV/NVENC/AMF currently accelerate encoding only; decoding and video filters remain
 software. Full decode/filter/encode VAAPI processing applies to the Linux VAAPI path.
 
-Recognized HDR transcoding automatically produces SDR BT.709.
+Recognized HDR video re-encoding automatically produces SDR BT.709.
 Windows HDR processing uses CPU zscale/libzimg and Hable tonemap.
 The FFmpeg build must include those filters. A cached in-memory compressed HDR10
 fixture tests the path before HDR streaming; missing/failed support returns an error.
 SDR input is not tone-mapped. Original bytes remain unchanged.
+Audio-only conversion also bypasses tone mapping and copies the original video.
+The tone_mapping file option selects VAAPI GPU curves on Linux; it does not
+enable Vulkan/OpenCL processing on these Windows encoding-only backends.
 
 Supported Dolby Vision HDR10/HLG-compatible base layers can be used.
 Dynamic metadata/enhancement layers are not reconstructed; unsupported proprietary
@@ -131,7 +142,10 @@ capability/filter caches.
 6. Integrated NZBDAV
 -------------------
 
-Add these settings to the active file:
+Open Settings -> Access & media -> NZBDAV · remote media to enter URL,
+WebDAV username/password, relative root and RAM cache budget. These settings
+are saved in the active file and take effect on the next remote access.
+The equivalent file entries are:
 
 nzbdav_url=http://nzbdav.example:3000/
 nzbdav_user=WEBDAV_USER
@@ -142,6 +156,9 @@ nzbdav_ram_cache_mb=256
 Replace endpoint and credentials with WebDAV values, not rclone RC values.
 The administrator receives an NZBDAV library.
 No rclone, FUSE or tmpfs is required.
+Saving validates syntax without connecting to WebDAV. Open the library after
+saving to verify access. Clearing the URL disables the integration and keeps
+the other fields. Connection/root/cache changes can interrupt remote playback.
 
 The video cache holds 4 MiB RAM blocks and evicts least recently used blocks while
 movies remain open. Movies may exceed cache size. Seeking to evicted data rereads it.

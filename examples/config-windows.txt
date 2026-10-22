@@ -5,6 +5,8 @@ use_master_password=false
 master_password=
 transcoder=auto
 default_quality=auto
+# Use audio_only to copy video and convert audio without a video encoder/HDR filter.
+# The browser must support the source video/HDR. NZBDAV fields are in Access & media.
 
 D:\Movies
 D:\TV

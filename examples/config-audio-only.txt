@@ -1,0 +1,16 @@
+# Linux/Docker example: preserve video; convert selected audio only.
+# Copy to the active config location and replace the server/container paths.
+# The browser must support original H.264/HEVC/AV1 video and its HDR format.
+# Passwordless access permits administration; choose an access mode in Settings.
+port=8060
+use_master_password=false
+master_password=
+transcoder=auto
+default_quality=audio_only
+
+# Default audio: AAC stereo, 48 kHz, 192 Kbps. Change track/codec in the player.
+# Video is copied without video encoder checks or tone mapping.
+# NZBDAV can be added in Settings -> Access & media -> NZBDAV · remote media.
+
+/media/Movies
+/media/TV

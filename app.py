@@ -33,7 +33,7 @@ import fitz
 
 from media_runtime import media_runtime
 from media_cache import MetadataCache
-from nzbdav import MediaService, WebDAVPath, RemoteError
+from nzbdav import MediaService, WebDAVPath, RemoteError, validate_config as validate_nzbdav_config
 from subtitle_windows import capture_packets, matroska_payload, subtitle_container
 from tone_mapping import tone_mapping_plan, ToneMappingPlan, ToneMappingError, HDR10_PROBE, HDR10_VIDEO
 
@@ -1242,6 +1242,18 @@ def settings_page():
                 default_quality = request.form.get("default_quality", values["default_quality"])
                 if default_quality not in QUALITY_PROFILES:
                     raise ValueError("Select a supported default quality.")
+                remote = {key: request.form.get(key, values[key]) for key in
+                          ('nzbdav_url', 'nzbdav_user', 'nzbdav_root', 'nzbdav_ram_cache_mb')}
+                if request.form.get('nzbdav_clear_password') == '1' and request.form.get('nzbdav_password'):
+                    raise ValueError('Enter a new NZBDAV password or remove the saved password, not both.')
+                remote['nzbdav_password'] = ('' if request.form.get('nzbdav_clear_password') == '1' else
+                                             request.form.get('nzbdav_password') or values['nzbdav_password'])
+                ram = remote['nzbdav_ram_cache_mb']
+                if not ram.isascii() or not ram.isdecimal():
+                    raise ValueError('NZBDAV RAM cache must be an integer between 8 and 16384 MiB.')
+                validate_nzbdav_config(remote['nzbdav_url'], remote['nzbdav_user'], remote['nzbdav_password'],
+                                       remote['nzbdav_root'], int(ram))
+                remote['nzbdav_ram_cache_mb'] = str(int(ram))
                 mode = request.form.get("mode", "")
                 if mode not in {"none", "master", "profiles"}:
                     raise ValueError("Select an access mode.")
@@ -1273,7 +1285,7 @@ def settings_page():
                     line = raw.strip()
                     if line.startswith("#") or ("=" in line and not line.startswith(("-", "<")) and line.split("=", 1)[0].strip().lower() not in values):
                         retained.append(raw)
-                updated = {**values, "port": str(int(port)), "use_master_password": str(mode == "master").lower(),
+                updated = {**values, **remote, "port": str(int(port)), "use_master_password": str(mode == "master").lower(),
                            "master_password": master, "transcoder": transcoder, "default_quality": default_quality}
                 content = retained + [f"{key}={value}" for key, value in updated.items()] + [""]
                 for password, paths in libraries:
@@ -1315,7 +1327,17 @@ def settings_page():
             # Keep the original revision so a stale form cannot overwrite external edits.
             version = request.form.get("version", "")
             # Keep the user's edits on validation/save errors; never render passwords.
-            values.update({key: request.form.get(key, values[key]) for key in ("port", "transcoder", "default_quality")})
+            values.update({key: request.form.get(key, values[key]) for key in
+                           ('port', 'transcoder', 'default_quality', 'nzbdav_url', 'nzbdav_user',
+                            'nzbdav_root', 'nzbdav_ram_cache_mb')})
+            # Invalid URLs may contain misplaced passwords/tokens. Do not
+            # reflect these into the returned page after rejecting the form.
+            try:
+                remote_url = urlsplit(values['nzbdav_url'])
+                if remote_url.username is not None or remote_url.password is not None or remote_url.query or remote_url.fragment:
+                    values['nzbdav_url'] = ''
+            except ValueError:
+                values['nzbdav_url'] = ''
             public_paths = request.form.get("public_paths", public_paths)
             profiles = [{"original": request.form.get(f"original_{row}", ""), "paths": request.form.get(f"paths_{row}", "")} for row in request.form.getlist("profile_row")]
     response = make_response(render_template(
