@@ -77,6 +77,52 @@ class ToneMappingTests(unittest.TestCase):
         self.assertIn('-an', command)
         self.assertNotIn('-af', command)
 
+    def test_libplacebo_modes_keep_decode_and_encode_on_same_gpu(self):
+        for mode, algorithm in [('libplacebo-bt2390', 'bt.2390'),
+                                ('libplacebo-mobius', 'mobius'),
+                                ('libplacebo-reinhard', 'reinhard')]:
+            command = server.transcode_command('vaapi', Path('hdr.mkv'), 1, 0,
+                                               source_video=HDR10_VIDEO, tone_mapper=mode)
+            graph = command[command.index('-vf') + 1]
+            self.assertIn('vulkan=lanstream_vk@lanstream', command)
+            self.assertEqual(command[command.index('-hwaccel_device') + 1], 'lanstream')
+            self.assertIn('tonemapping=' + algorithm, graph)
+            self.assertLess(graph.index('derive_device=vulkan'), graph.index('libplacebo='))
+            self.assertLess(graph.index('libplacebo='), graph.index('derive_device=vaapi'))
+            self.assertLess(graph.index('derive_device=vaapi'), graph.index('scale_vaapi='))
+            self.assertIn('apply_dolbyvision=0', graph)
+            for unwanted in ('hwdownload', 'hwupload', 'zscale', 'tonemap_vaapi='):
+                self.assertNotIn(unwanted, graph)
+            self.assertIn('-af', command)
+        with self.assertRaises(ToneMappingError):
+            tone_mapping_plan(HDR10_VIDEO, 'vaapi', 'arbitrary:filter=1')
+
+    def test_libplacebo_preflight_is_separate_from_vaapi_and_requires_interop(self):
+        filters = tone_mapping_plan(HDR10_VIDEO, 'vaapi').required | tone_mapping_plan(HDR10_VIDEO, 'vaapi', 'libplacebo-bt2390').required
+        with patch.object(server, 'ffmpeg_filters', return_value=filters), patch.object(
+                server, 'run_media_command', side_effect=[Mock(returncode=0, stdout=b'mp4', stderr=b''),
+                                                        Mock(returncode=1, stdout=b'', stderr=b'Vulkan hardware mapping failed')]) as run:
+            self.assertTrue(server.tone_mapping_test('vaapi')[0])
+            supported, detail = server.tone_mapping_test('vaapi', 'libplacebo-bt2390')
+            self.assertFalse(supported)
+            self.assertIn('mapping failed', detail)
+            self.assertEqual(run.call_args.kwargs['input'], HDR10_PROBE)
+            self.assertIn('libplacebo=', run.call_args.args[0][run.call_args.args[0].index('-vf') + 1])
+            self.assertTrue(server.tone_mapping_test('vaapi')[0])
+            self.assertEqual(run.call_count, 2)
+
+    def test_configured_tone_mapper_is_used_without_changing_sdr(self):
+        with patch.object(server, 'load_settings', return_value={'tone_mapping': 'libplacebo-mobius'}):
+            hdr = server.transcode_command('vaapi', Path('hdr.mkv'), None, 0, source_video=HDR10_VIDEO)
+            sdr = server.transcode_command('vaapi', Path('sdr.mkv'), None, 0)
+        self.assertIn('tonemapping=mobius', hdr[hdr.index('-vf') + 1])
+        self.assertNotIn('lanstream_vk', ' '.join(sdr))
+
+    @unittest.skipUnless(Path('/dev/dri/renderD128').exists(), 'Linux VAAPI/Vulkan GPU required')
+    def test_real_libplacebo_pipeline(self):
+        supported, detail = server.tone_mapping_test('vaapi', 'libplacebo-bt2390')
+        self.assertTrue(supported, detail)
+
     def test_hlg_and_dolby_vision_profiles_are_not_misidentified(self):
         hlg = {**HDR10_VIDEO, 'color_transfer': 'arib-std-b67'}
         self.assertIn('HLG', tone_mapping_plan(hlg, 'software').label)

@@ -101,6 +101,7 @@ def load_settings() -> dict[str, str]:
         "master_password": "",
         "transcoder": "auto",
         "default_quality": "auto",
+        "tone_mapping": "vaapi",
         "nzbdav_url": "",
         "nzbdav_user": "",
         "nzbdav_password": "",
@@ -2126,12 +2127,14 @@ def transcode_command(
     video_codec: str = "h264",
     audio_codec: str = "aac",
     source_video: dict | None = None,
+    tone_mapper: str | None = None,
 ) -> list[str]:
     quality = quality or QUALITY_PROFILES["auto"]
     if quality == QUALITY_PROFILES["source"]:
         raise ValueError("Original quality must not be transcoded")
     limited = bool(quality["video_kbps"])
-    mapping = tone_mapping_plan(source_video, backend)
+    tone_mapper = tone_mapper if tone_mapper is not None else load_settings()['tone_mapping']
+    mapping = tone_mapping_plan(source_video, backend, tone_mapper)
     cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-nostdin"]
     if backend == "vaapi":
         if mapping.active:
@@ -2139,8 +2142,12 @@ def transcode_command(
             cmd += ['-noauto_conversion_filters']
         # Share one device between decoder, VPP and encoder. Keep decoded
         # surfaces on the GPU; software frames must never enter this graph.
-        cmd += ["-init_hw_device", f"vaapi=lanstream:{VAAPI_DEVICE}",
-                "-filter_hw_device", "lanstream",
+        cmd += ["-init_hw_device", f"vaapi=lanstream:{VAAPI_DEVICE}"]
+        if mapping.vulkan:
+            # Derive Vulkan from the selected VAAPI adapter, never a software
+            # Vulkan renderer or an unrelated default GPU.
+            cmd += ['-init_hw_device', 'vulkan=lanstream_vk@lanstream']
+        cmd += ["-filter_hw_device", "lanstream_vk" if mapping.vulkan else "lanstream",
                 "-hwaccel", "vaapi", "-hwaccel_device", "lanstream",
                 "-hwaccel_output_format", "vaapi"]
     cmd += playback_input_args(source, start) + ["-map", "0:v:0"]
@@ -2214,15 +2221,15 @@ def ffmpeg_filters() -> frozenset[str]:
         listing, re.MULTILINE))
 
 
-@lru_cache(maxsize=8)
-def tone_mapping_test(backend: str) -> tuple[bool, str]:
+@lru_cache(maxsize=16)
+def tone_mapping_test(backend: str, tone_mapper: str = 'vaapi') -> tuple[bool, str]:
     """Exercise the HDR pipeline once per backend using a bundled RAM fixture."""
     try:
-        plan = tone_mapping_plan(HDR10_VIDEO, backend)
+        plan = tone_mapping_plan(HDR10_VIDEO, backend, tone_mapper)
         missing = plan.required - ffmpeg_filters()
         if missing:
             return False, 'FFmpeg is missing tone-mapping filters: ' + ', '.join(sorted(missing))
-        command = transcode_command(backend, Path('hdr-test'), None, 0, source_video=HDR10_VIDEO)
+        command = transcode_command(backend, Path('hdr-test'), None, 0, source_video=HDR10_VIDEO, tone_mapper=tone_mapper)
         before, after = command.index('-skip_estimate_duration_from_pts'), command.index('-map')
         command[before:after] = ['-f', 'hevc', '-i', 'pipe:0', '-frames:v', '1']
         result = run_media_command(command, input=HDR10_PROBE, capture_output=True, timeout=20)
@@ -2361,11 +2368,12 @@ def transcode(root_index, relpath):
         if audio_index not in {track['index'] for track in audio_tracks}:
             abort(400)
     try:
-        mapping = tone_mapping_plan(source_video, backend)
+        tone_mapper = load_settings()['tone_mapping']
+        mapping = tone_mapping_plan(source_video, backend, tone_mapper)
     except ToneMappingError as error:
         return rejected_playback(source, backend, str(error), 415)
     if mapping.active:
-        supported, detail = tone_mapping_test(backend)
+        supported, detail = tone_mapping_test(backend, tone_mapper)
         if not supported:
             return rejected_playback(source, backend,
                                      'HDR-to-SDR tone mapping is unavailable on the selected backend.\n' + detail, 503)
@@ -2375,7 +2383,7 @@ def transcode(root_index, relpath):
             return Response(f"Audio encoder unavailable: {detail}", status=503, mimetype="text/plain")
     encoder = VIDEO_ENCODERS[backend][video_codec]
     encoder_label = f"{BACKEND_LABELS[backend]} · {encoder}"
-    cmd = transcode_command(backend, target, audio_index, start, quality, video_codec, audio_codec, source_video)
+    cmd = transcode_command(backend, target, audio_index, start, quality, video_codec, audio_codec, source_video, tone_mapper)
     app.logger.info("Starting %s transcode: %s", encoder_label,
                     source.name if isinstance(source, WebDAVPath) or source.suffix.lower() == ".strm" else " ".join(cmd))
     try:

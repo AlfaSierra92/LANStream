@@ -32,6 +32,7 @@ Unknown settings are not automatically implemented merely because they are prese
 | master_password | empty | Shared password. |
 | transcoder | auto | Preferred backend: auto, vaapi, qsv, nvenc, amf or software. |
 | default_quality | auto | Initial quality for newly opened players. |
+| tone_mapping | vaapi | VAAPI HDR conversion: vaapi, libplacebo-bt2390, libplacebo-mobius or libplacebo-reinhard. |
 | nzbdav_url | empty | HTTP/HTTPS WebDAV endpoint; empty disables the integration. |
 | nzbdav_user | empty | WebDAV username; empty means no Basic Auth header. |
 | nzbdav_password | empty | WebDAV password. |
@@ -85,21 +86,34 @@ The video decoder must independently support the input codec/profile.
 
 ### Tone mapping
 
-No extra configuration key is required. Recognized HDR input is converted to SDR
+Recognized HDR input is converted to SDR
 whenever transcoding runs. SDR input and original-byte delivery are unchanged.
 
-VAAPI uses tonemap_vaapi for PQ/HDR10. It does not switch to CPU tone mapping if
-the driver/filter fails, and rejects HLG input in this path.
+The default tone_mapping=vaapi uses tonemap_vaapi for PQ/HDR10 and rejects HLG.
+For alternative GPU curves, add one of these global settings to config.txt:
+
+```ini
+tone_mapping=libplacebo-bt2390
+```
+
+Other choices are libplacebo-mobius and libplacebo-reinhard. These modes also
+accept HLG, use Vulkan for tone mapping and VAAPI for decoding/scaling/encoding.
+Vulkan is derived from the selected VAAPI adapter. FFmpeg must include libplacebo,
+hwmap and Vulkan/VAAPI interoperability; a filter listing alone is insufficient.
+There is no automatic CPU or VAAPI tone-mapper fallback on failure. To restore
+the original curve, set tone_mapping=vaapi. Settings preserves this file-only key.
+Restart after editing the file and reopen playback. Compare the same scene;
+another curve is not guaranteed to brighten a particular movie or display.
 Other backends use zscale and the CPU Hable operator for PQ/HLG.
 
 A capability test uses a tiny compressed HDR10 frame held in memory.
-Results are cached per backend until restart or Activity's retest.
+Results are cached per backend and selected mapping mode until restart or Activity's retest.
 The test does not fetch or store any user's movie.
 Missing filters or a failed test produce HTTP 503 before the stream starts.
 Unsupported input color/Dolby Vision combinations produce HTTP 415.
 
 Dolby Vision Profile 7 and Profile 8 with an HDR10-compatible base layer can use
-that base layer. Profile 8 HLG-compatible input can use the CPU path.
+that base layer. Profile 8 HLG-compatible input can use libplacebo or the CPU path.
 Profile 5 and other unsupported proprietary combinations are rejected.
 This is not full Dolby Vision processing.
 

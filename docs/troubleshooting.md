@@ -106,7 +106,8 @@ VAAPI playback should contain:
 ```
 
 HEVC/AV1 outputs use their corresponding VAAPI encoder names.
-HDR10 conversion additionally contains tonemap_vaapi.
+HDR10 conversion additionally contains tonemap_vaapi, or libplacebo plus hardware
+mapping when an optional Vulkan curve is selected.
 It should not download video for CPU filters.
 
 format=nv12,hwupload alone identifies the old CPU-decode/upload pipeline,
@@ -175,6 +176,14 @@ python -m unittest discover -s tests -p test_tone_mapping.py -v
 A hardware test skipped on a Mac is not validation of an Intel server.
 
 ## HDR conversion fails or colors look wrong
+
+For a dark SDR rendition, compare alternative GPU curves with
+tone_mapping=libplacebo-bt2390, libplacebo-mobius or libplacebo-reinhard in config.txt.
+Restart and reopen playback. Playback info identifies the active algorithm.
+All require Vulkan/VAAPI interoperability on the selected GPU, not just a listed
+libplacebo filter. A failed capability check stops playback with its error;
+tone_mapping=vaapi restores the original mapper. Do not change color tags to
+compensate for brightness: tags describe a conversion, they do not perform it.
 
 If the message names Parsed_anull, an audio format_out, and different channel
 layouts such as 5.1.2 → stereo, update app.py. Older HDR commands disabled implicit

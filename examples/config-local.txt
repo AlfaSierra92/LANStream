@@ -5,6 +5,8 @@ use_master_password=false
 master_password=
 transcoder=auto
 default_quality=auto
+# Optional GPU curves: libplacebo-bt2390, libplacebo-mobius, libplacebo-reinhard.
+tone_mapping=vaapi
 
 /media/Movies
 /media/TV

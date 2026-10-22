@@ -158,7 +158,7 @@ tone_mapping_plan is based on probe metadata, never the filename or bit depth al
 | --- | --- |
 | SDR/10-bit SDR | No HDR conversion filters or forced BT.709 tags. |
 | PQ/smpte2084 | HDR10-style conversion to SDR. |
-| HLG/arib-std-b67 | CPU HDR-to-SDR path; rejected by the current VAAPI plan. |
+| HLG/arib-std-b67 | CPU or optional libplacebo path; rejected by the default VAAPI mapper. |
 | Dolby Vision Profile 7 / compatible Profile 8 | Uses an ordinary HDR10/HLG base layer where supported. |
 | Unsupported proprietary Dolby Vision profiles | Rejected rather than treated as ordinary PQ. |
 
@@ -167,6 +167,13 @@ Known supported color values are validated before constructing filter strings.
 Unsupported values fail instead of being interpolated into arbitrary filter syntax.
 
 VAAPI uses explicit BT.709 output on tonemap_vaapi and limited-range GPU scaling.
+Optional tone_mapping=libplacebo-bt2390, libplacebo-mobius and libplacebo-reinhard
+derive a Vulkan device from the selected VAAPI device. The graph maps VAAPI
+surfaces to Vulkan, applies libplacebo with explicit limited-range BT.709 output,
+maps back to VAAPI, then scales/encodes. No hwdownload or software video filter
+is inserted. Dolby Vision application is disabled so these modes consistently
+use the already classified HDR10/HLG base layer. The cached fixture encode tests
+both hardware mappings and the encoder, keyed by backend and mapping mode.
 Immediately after tone mapping, a metadata-only setparams filter declares the SDR
 matrix, transfer, primaries and range to FFmpeg's graph negotiation. This prevents
 FFmpeg 8.1 from propagating the input BT.2020 matrix to the encoder and inserting

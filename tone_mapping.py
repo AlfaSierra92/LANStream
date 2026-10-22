@@ -12,6 +12,7 @@ class ToneMappingPlan:
     label: str = 'Off · SDR source'
     filters: tuple[str, ...] = ()
     required: frozenset[str] = frozenset()
+    vulkan: bool = False
 
     @property
     def active(self):
@@ -28,7 +29,11 @@ HDR10_VIDEO = {'color_transfer': 'smpte2084', 'color_primaries': 'bt2020', 'colo
 SDR_FRAME_PROPERTIES = 'setparams=range=limited:color_primaries=bt709:color_trc=bt709:colorspace=bt709'
 
 
-def tone_mapping_plan(video, backend):
+TONE_MAPPING_MODES = {'vaapi': None, 'libplacebo-bt2390': 'bt.2390',
+                      'libplacebo-mobius': 'mobius', 'libplacebo-reinhard': 'reinhard'}
+
+
+def tone_mapping_plan(video, backend, mode='vaapi'):
     video = video or {}
     transfer = video.get('color_transfer')
     base = ''
@@ -58,6 +63,19 @@ def tone_mapping_plan(video, backend):
     if primaries not in {'bt2020', 'bt709', 'smpte432'} or matrix not in {'bt2020nc', 'bt2020c', 'bt709'}:
         raise ToneMappingError('Unsupported HDR color primaries or matrix; refusing an incorrect SDR conversion.')
     if backend == 'vaapi':
+        if mode not in TONE_MAPPING_MODES:
+            raise ToneMappingError('Invalid tone_mapping setting. Use vaapi, libplacebo-bt2390, libplacebo-mobius or libplacebo-reinhard.')
+        algorithm = TONE_MAPPING_MODES[mode]
+        if algorithm:
+            return ToneMappingPlan(
+                f'{source} → SDR BT.709 · libplacebo {algorithm} (Vulkan)',
+                (f'setparams=color_primaries={primaries}:color_trc={transfer}:colorspace={matrix}',
+                 'hwmap=derive_device=vulkan', 'format=vulkan',
+                 f'libplacebo=tonemapping={algorithm}:peak_detect=1:apply_dolbyvision=0:format=nv12:color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv',
+                 'hwmap=derive_device=vaapi', 'format=vaapi', SDR_FRAME_PROPERTIES),
+                frozenset({'setparams', 'hwmap', 'format', 'libplacebo', 'scale_vaapi', 'sidedata'}),
+                vulkan=True,
+            )
         if transfer != 'smpte2084':
             raise ToneMappingError('VAAPI tone mapping supports HDR10/PQ input here, not HLG. Software fallback is disabled; use an HDR10 source or Original on a compatible client.')
         return ToneMappingPlan(

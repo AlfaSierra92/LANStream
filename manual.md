@@ -427,6 +427,12 @@ SDR input, including 10-bit SDR, is not identified as HDR just from bit depth.
 PQ/smpte2084 identifies HDR10-style input.
 HLG/arib-std-b67 is handled by the software processing path.
 VAAPI uses tonemap_vaapi for PQ and rejects HLG rather than silently using CPU.
+Alternatively, set tone_mapping=libplacebo-bt2390, libplacebo-mobius or
+libplacebo-reinhard in config.txt. These modes accept PQ/HLG and map GPU surfaces
+through Vulkan for tone mapping, back to VAAPI for scaling and encoding.
+The same in-memory capability check verifies the complete selected chain before
+playback. Missing Vulkan/VAAPI interoperability causes an error, with no CPU
+fallback. See the [configuration reference](docs/configuration.md#tone-mapping).
 
 The GPU path tone-maps before converting/scaling to NV12 for encoding.
 The CPU path linearizes to floating-point RGB with zscale, converts the gamut,
@@ -445,7 +451,7 @@ frames; unsuitable sources can still fail at runtime.
 The GPU's HEVC Main 10 decoder alone is not enough.
 
 Dolby Vision Profile 7 and compatible Profile 8 sources can use an ordinary
-HDR10 base layer. HLG-compatible Profile 8 can use the CPU HLG path.
+HDR10 base layer. HLG-compatible Profile 8 can use libplacebo or the CPU HLG path.
 Dynamic Dolby Vision metadata/enhancement layers are not reconstructed.
 Unsupported proprietary profiles, including Profile 5, are rejected for conversion.
 Do not infer support from a filename containing HDR or DV.
