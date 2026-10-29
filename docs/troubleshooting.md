@@ -229,12 +229,19 @@ it is not a way to make unsupported video decodable. Check Playback info for
 video passthrough and tone mapping off. No video encoder/GPU test is required.
 
 For a dark SDR rendition, compare alternative GPU curves with
-tone_mapping=libplacebo-bt2390, libplacebo-mobius or libplacebo-reinhard in config.txt.
+tone_mapping=libplacebo-bt2390, libplacebo-bt2446a, libplacebo-mobius or
+libplacebo-reinhard in config.txt.
 Restart and reopen playback. Playback info identifies the active algorithm.
 All require Vulkan/VAAPI interoperability on the selected GPU, not just a listed
 libplacebo filter. A failed capability check stops playback with its error;
 tone_mapping=vaapi restores the original mapper. Do not change color tags to
 compensate for brightness: tags describe a conversion, they do not perform it.
+
+`libplacebo-bt2446a` selects the BT.2446a curve with BT.709 output primaries.
+Libplacebo interprets FFmpeg's BT.709 transfer tag as the BT.1886 display
+transfer. This mode does not explicitly set a 100-nit target luminance and
+should not be treated as an exact reproduction of an mpv `target-peak=100`
+configuration.
 
 If libplacebo fails with only "Error initializing filters" and "Invalid argument",
 update app.py and restart (or retest in Activity) to clear the cached failure.

@@ -55,9 +55,24 @@ under `runtime/`. To reuse an existing configuration, place it at
 `runtime/config/config.txt` before starting. To change the host port, run
 `LANSTREAM_PORT=8070 docker compose up -d --build`.
 
-For local folders or Linux VAAPI, uncomment the relevant volume/device entries
-in `compose.yaml` and adjust their paths. View logs with `docker compose logs -f`;
-stop with `docker compose down`.
+For local folders, uncomment the relevant volume entries in `compose.yaml` and
+adjust their paths. View logs with `docker compose logs -f`; stop with
+`docker compose down`.
+
+On a Linux Docker host with a VAAPI GPU, enable device access with:
+
+```bash
+ls -l /dev/dri
+docker compose -f compose.yaml -f compose.vaapi.yaml up -d --build
+```
+
+This recreates the container with `/dev/dri` exposed and explicitly selects
+VAAPI. Use both Compose files for subsequent `up` commands. The default render
+node is `/dev/dri/renderD128`; if your GPU uses another node, set
+`LANSTREAM_VAAPI_DEVICE=/dev/dri/renderD129` before the Compose command, using
+the actual path from your host. In Activity, click **Retest transcoder backends**
+to see the driver/device test result. If the host has no `/dev/dri`, this override
+cannot enable VAAPI; check the host GPU driver or VM GPU passthrough first.
 
 Alternatively, use Docker directly:
 
@@ -164,7 +179,7 @@ See [integrated NZBDAV](manual.md#integrated-nzbdav).
 Video transcoding automatically converts recognized HDR input to SDR BT.709:
 
 - **VAAPI:** HDR10/PQ uses tonemap_vaapi before GPU resizing and encoding.
-  Optional libplacebo/Vulkan modes offer BT.2390, Mobius and Reinhard curves;
+  Optional libplacebo/Vulkan modes offer BT.2390, BT.2446a, Mobius and Reinhard curves;
   OpenCL offers Mobius, Reinhard and Hable without requiring libplacebo/Vulkan;
   see [configuration](docs/configuration.md#tone-mapping).
 - **Other backends:** PQ/HLG uses CPU zscale and Hable tone mapping; FFmpeg must

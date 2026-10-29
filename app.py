@@ -1068,16 +1068,20 @@ def available_transcoder_tests() -> list[tuple[str, str, tuple[bool, str]]]:
         tests.append(("nvenc", "NVIDIA NVENC", run_encoder_test("h264_nvenc", video_filter="format=nv12")))
         tests.append(("amf", "AMD AMF", run_encoder_test("h264_amf", video_filter="format=nv12")))
     else:
+        # Keep VAAPI visible even when the render device is missing. Otherwise
+        # an explicit VAAPI preference falls through to automatic selection.
         if Path(VAAPI_DEVICE).exists():
-            tests.append((
-                "vaapi",
-                "VAAPI",
-                run_encoder_test(
-                    "h264_vaapi",
-                    extra_before_input=["-vaapi_device", VAAPI_DEVICE],
-                    video_filter="format=nv12,hwupload,scale_vaapi=format=nv12",
-                ),
-            ))
+            vaapi_result = run_encoder_test(
+                "h264_vaapi",
+                extra_before_input=["-vaapi_device", VAAPI_DEVICE],
+                video_filter="format=nv12,hwupload,scale_vaapi=format=nv12",
+            )
+        else:
+            vaapi_result = (False,
+                f"VAAPI render device not found: {VAAPI_DEVICE}. "
+                "On Linux, verify /dev/dri and LANSTREAM_VAAPI_DEVICE. "
+                "For Docker/LEC, expose /dev/dri to the container.")
+        tests.append(("vaapi", "VAAPI", vaapi_result))
         tests.append(("nvenc", "NVIDIA NVENC", run_encoder_test("h264_nvenc", video_filter="format=nv12")))
 
     tests.append(("software", "Software libx264", run_encoder_test("libx264")))

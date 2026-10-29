@@ -1,0 +1,8 @@
+# Linux hosts with /dev/dri only. Combine with compose.yaml.
+services:
+  lanstream:
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      LANSTREAM_TRANSCODER: vaapi
+      LANSTREAM_VAAPI_DEVICE: ${LANSTREAM_VAAPI_DEVICE:-/dev/dri/renderD128}

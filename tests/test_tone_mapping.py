@@ -79,6 +79,7 @@ class ToneMappingTests(unittest.TestCase):
 
     def test_libplacebo_modes_keep_decode_and_encode_on_same_gpu(self):
         for mode, algorithm in [('libplacebo-bt2390', 'bt.2390'),
+                                ('libplacebo-bt2446a', 'bt.2446a'),
                                 ('libplacebo-mobius', 'mobius'),
                                 ('libplacebo-reinhard', 'reinhard')]:
             command = server.transcode_command('vaapi', Path('hdr.mkv'), 1, 0,

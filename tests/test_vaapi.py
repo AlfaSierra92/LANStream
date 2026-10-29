@@ -10,6 +10,43 @@ import app as server
 
 
 class VAAPITests(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(setattr, server, '_transcoder_cache', server._transcoder_cache)
+
+    @unittest.skipIf(server.os.name == 'nt', 'VAAPI detection is Linux-only')
+    def test_missing_device_remains_visible_and_explicit_preference_does_not_fallback(self):
+        with patch.object(server, 'VAAPI_DEVICE', '/missing/dri/renderD128'), \
+             patch.object(server, 'TRANSCODER_PREFERENCE', 'vaapi'), \
+             patch.object(server, 'run_encoder_test', return_value=(True, '')) as probe:
+            status = server.selected_transcoder(force_refresh=True)
+        self.assertFalse(status['ok'])
+        self.assertIsNone(status['key'])
+        self.assertIn('/missing/dri/renderD128', status['detail'])
+        self.assertIn('expose /dev/dri', status['detail'])
+        self.assertEqual(status['tests'][0][:3], ('vaapi', 'VAAPI', False))
+        self.assertNotIn('h264_vaapi', [call.args[0] for call in probe.call_args_list])
+
+    @unittest.skipIf(server.os.name == 'nt', 'VAAPI detection is Linux-only')
+    def test_auto_can_use_software_while_reporting_missing_vaapi(self):
+        with patch.object(server, 'VAAPI_DEVICE', '/missing/dri/renderD128'), \
+             patch.object(server, 'TRANSCODER_PREFERENCE', 'auto'), \
+             patch.object(server, 'run_encoder_test', side_effect=[(False, 'no NVIDIA GPU'), (True, '')]):
+            status = server.selected_transcoder(force_refresh=True)
+        self.assertEqual(status['key'], 'software')
+        self.assertFalse(status['tests'][0][2])
+
+    @unittest.skipIf(server.os.name == 'nt', 'VAAPI detection is Linux-only')
+    def test_refresh_detects_restored_device_and_preserves_driver_errors(self):
+        with patch.object(server, 'TRANSCODER_PREFERENCE', 'vaapi'), \
+             patch.object(server.Path, 'exists', return_value=True), \
+             patch.object(server, 'run_encoder_test', return_value=(False, 'Permission denied')) as probe:
+            status = server.selected_transcoder(force_refresh=True)
+            self.assertFalse(status['ok'])
+            self.assertEqual(status['detail'], 'Permission denied')
+            probe.return_value = (True, '')
+            self.assertFalse(server.selected_transcoder()['ok'])
+            self.assertEqual(server.selected_transcoder(force_refresh=True)['key'], 'vaapi')
+
     def test_gpu_frames_are_kept_on_device_for_all_output_codecs_and_qualities(self):
         for codec in server.VIDEO_CODECS:
             for name, quality in server.QUALITY_PROFILES.items():

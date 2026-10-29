@@ -32,7 +32,7 @@ Unknown settings are not automatically implemented merely because they are prese
 | master_password | empty | Shared password. |
 | transcoder | auto | Preferred backend: auto, vaapi, qsv, nvenc, amf or software. |
 | default_quality | auto | Initial quality for newly opened players. |
-| tone_mapping | vaapi | VAAPI HDR conversion: vaapi; libplacebo-bt2390, libplacebo-mobius, libplacebo-reinhard; opencl-mobius, opencl-reinhard, opencl-hable. |
+| tone_mapping | vaapi | VAAPI HDR conversion: vaapi; libplacebo-bt2390, libplacebo-bt2446a, libplacebo-mobius, libplacebo-reinhard; opencl-mobius, opencl-reinhard, opencl-hable. |
 | nzbdav_url | empty | HTTP/HTTPS WebDAV endpoint; empty disables the integration. |
 | nzbdav_user | empty | WebDAV username; empty means no Basic Auth header. |
 | nzbdav_password | empty | WebDAV password. |

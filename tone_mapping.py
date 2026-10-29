@@ -31,6 +31,7 @@ SDR_FRAME_PROPERTIES = 'setparams=range=limited:color_primaries=bt709:color_trc=
 
 
 TONE_MAPPING_MODES = {'vaapi': None, 'libplacebo-bt2390': 'bt.2390',
+                      'libplacebo-bt2446a': 'bt.2446a',
                       'libplacebo-mobius': 'mobius', 'libplacebo-reinhard': 'reinhard',
                       'opencl-mobius': 'mobius', 'opencl-reinhard': 'reinhard',
                       'opencl-hable': 'hable'}

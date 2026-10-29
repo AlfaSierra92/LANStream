@@ -15,6 +15,4 @@ services:
       - ./runtime/cache:/cache
       # Optional local library; configure /media paths in Settings.
       # - /srv/media:/media:ro
-    # Optional VAAPI acceleration on Linux; enable when /dev/dri exists.
-    # devices:
-    #   - /dev/dri:/dev/dri
+    # For Linux VAAPI, also pass -f compose.vaapi.yaml (see README.md).
